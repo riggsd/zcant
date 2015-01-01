@@ -3,6 +3,7 @@ import struct
 import contextlib
 from glob import glob
 from os.path import basename
+from datetime import datetime
 
 import logging
 log = logging.getLogger(__name__)
@@ -10,12 +11,34 @@ log = logging.getLogger(__name__)
 Byte = struct.Struct('< B')
 
 
-def extract_anabat(fname, divratio=8):
-    """Extract (times, frequencies) from Anabat sequence file"""
+ANABAT_129_HEAD_FMT = '< H x B 2x 8s 8s 40s 50s 16s 73s 80s'  # 0x0: data_info_pointer, file_type, tape, date, loc, species, spec, note1, note2
+ANABAT_129_DATA_INFO_FMT = '< H H B B'  # 0x11a: data_pointer, res1, divratio, vres
+ANABAT_132_ADDL_DATA_INFO_FMT = '< H B B B B B B H 6s 32s'  # 0x120: year, month, day, hour, minute, second, second_hundredths, microseconds, id_code, gps_data
+
+
+def _s(s):
+    """Strip whitespace and null bytes from string"""
+    return s.strip('\00\t ')
+
+
+def extract_anabat(fname):
+    """Extract (times, frequencies, metadata) from Anabat sequence file"""
     with open(fname, 'rb') as f, contextlib.closing(mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)) as m:
         size = len(m)
 
-        i = 0x150   # byte index as we scan through the file (data starts at 0x150)
+        # parse header
+        data_info_pointer, file_type, tape, date, loc, species, spec, note1, note2 = struct.unpack_from(ANABAT_129_HEAD_FMT, m)
+        data_pointer, res1, divratio, vres = struct.unpack_from(ANABAT_129_DATA_INFO_FMT, m, data_info_pointer)
+        metadata = dict(date=date, loc=_s(loc), species=_s(species).split(','), spec=_s(spec), note1=_s(note1), note2=_s(note2))
+        if file_type >= 132:
+            year, month, day, hour, minute, second, second_hundredths, microseconds, id_code, gps_data = struct.unpack_from(ANABAT_132_ADDL_DATA_INFO_FMT, m, 0x120)
+            timestamp = datetime(year, month, day, hour, minute, second, second_hundredths * 10000 + microseconds)
+            metadata.update(dict(timestamp=timestamp, id=_s(id_code), gps=_s(gps_data)))
+        log.debug('file_type: %d\tdata_info_pointer: 0x%3x\tdata_pointer: 0x%3x', file_type, data_info_pointer, data_pointer)
+        log.debug(metadata)
+
+        # parse actual sequence data
+        i = data_pointer   # byte index as we scan through the file (data starts at 0x150 for v132, 0x120 for older files)
         intervals = []
         freqs = []  # collection of parsed frequency values
         times = []  # collection of microsecond time values from start of file (if freq is Y axis, then time is X axis)     
@@ -82,7 +105,7 @@ def extract_anabat(fname, divratio=8):
     min_, max_ = min(freqs) if any(freqs) else 0, max(freqs) if any(freqs) else 0
     log.debug('%s\tDots: %d\tMinF: %d\tMaxF: %d', basename(fname), len(freqs), min_, max_)
     
-    return times, freqs
+    return times, freqs, metadata
 
 
 if __name__ == '__main__':

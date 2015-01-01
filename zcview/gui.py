@@ -19,6 +19,18 @@ import logging
 log = logging.getLogger(__name__)
 
 
+def title_from_path(path):
+    root, fname = os.path.split(path)
+    root, parent = os.path.split(root)
+    root, gparent = os.path.split(root)
+    if gparent:
+        return '%s %s %s %s %s' % (gparent, os.sep, parent, os.sep, fname)
+    elif parent:
+        return '%s %s %s' % (parent, os.sep, fname)
+    else:
+        return fname
+
+
 class ZCViewMainFrame(wx.Frame):
 
     def __init__(self, parent, title='Myotisoft ZCView'):
@@ -28,10 +40,7 @@ class ZCViewMainFrame(wx.Frame):
         self.dirname = ''
         self.filename = ''
 
-        self.control = None  # wx.TextCtrl(self, style=wx.TE_MULTILINE)  # how about a text editor, eh?
-
-        # Status Bar
-        self.CreateStatusBar()
+        self.plotpanel = None
 
         # Menu Bar
         menu_bar = wx.MenuBar()
@@ -52,14 +61,21 @@ class ZCViewMainFrame(wx.Frame):
         open_item = tool_bar.AddLabelTool(wx.ID_ANY, 'Open file',       wx.Bitmap('resources/icons/file-8x.png'), shortHelp='Open')
         self.Bind(wx.EVT_TOOL, self.on_open, open_item)
         tool_bar.AddSeparator()
-        prev_dir  = tool_bar.AddLabelTool(wx.ID_ANY, 'Previous folder', wx.Bitmap('resources/icons/chevron-left-8x.png'), shortHelp='Prev folder', longHelp='Open the previous folder (or use the `{` key)')
-        prev_file = tool_bar.AddLabelTool(wx.ID_ANY, 'Previous file',   wx.Bitmap('resources/icons/caret-left-8x.png'), shortHelp='Prev file', longHelp='Open the previous file in this folder (or use `[` key)')
+        prev_dir  = tool_bar.AddLabelTool(wx.ID_ANY, 'Previous folder', wx.Bitmap('resources/icons/chevron-left-8x.png'),
+                                          shortHelp='Prev folder', longHelp='Open the previous folder (or use the `{` key)')
+        prev_file = tool_bar.AddLabelTool(wx.ID_ANY, 'Previous file',   wx.Bitmap('resources/icons/caret-left-8x.png'),
+                                          shortHelp='Prev file', longHelp='Open the previous file in this folder (or use `[` key)')
         self.Bind(wx.EVT_TOOL, self.on_prev_file, prev_file)
-        next_file = tool_bar.AddLabelTool(wx.ID_ANY, 'Next file',       wx.Bitmap('resources/icons/caret-right-8x.png'), shortHelp='Next file', longHelp='Open the next file in this folder (or use the `]` key)')
+        next_file = tool_bar.AddLabelTool(wx.ID_ANY, 'Next file',       wx.Bitmap('resources/icons/caret-right-8x.png'),
+                                          shortHelp='Next file', longHelp='Open the next file in this folder (or use the `]` key)')
         self.Bind(wx.EVT_TOOL, self.on_next_file, next_file)
-        next_dir  = tool_bar.AddLabelTool(wx.ID_ANY, 'Next folder',     wx.Bitmap('resources/icons/chevron-right-8x.png'), shortHelp='Next folder', longHelp='Open the next folder (or use the `}` key)')
+        next_dir  = tool_bar.AddLabelTool(wx.ID_ANY, 'Next folder',     wx.Bitmap('resources/icons/chevron-right-8x.png'),
+                                          shortHelp='Next folder', longHelp='Open the next folder (or use the `}` key)')
         #self.SetToolBar(tool_bar)
         tool_bar.Realize()
+
+        # Status Bar
+        self.statusbar = self.CreateStatusBar()
 
         # Key Bindings
         prev_file_id, next_file_id, prev_dir_id, next_dir_id = wx.NewId(), wx.NewId(), wx.NewId(), wx.NewId()
@@ -112,29 +128,39 @@ class ZCViewMainFrame(wx.Frame):
         self.load_file(self.dirname, files[i+1])
 
     def on_prev_dir(self, event):
+        log.debug('prev_dir: %s', event)
         pass  # TODO
 
     def on_next_dir(self, event):
+        log.debug('next_dir: %s', event)
         pass  # TODO
 
     def load_file(self, dirname, filename):
         log.debug('load_file:  %s  %s', dirname, filename)
         path = os.path.join(dirname, filename)
-        times, freqs = extract_anabat(path)
+        times, freqs, metadata = extract_anabat(path)
         self.dirname, self.filename = dirname, filename  # only set on success
         log.debug('    %s:  times: %d  freqs: %d', filename, len(times), len(freqs))
         try:
-            panel = ZeroCrossPlotPanel(self, times, freqs)
+            panel = ZeroCrossPlotPanel(self, times, freqs, name=title_from_path(path))
             panel.Show()
-            self.control = panel
+            self.statusbar.SetStatusText('%s     Dots: %5d     Fmin: %5.1fkHz     Fmax: %5.1fkHz'
+                                         % (metadata.get('timestamp', None) or metadata.get('date', ''),
+                                            len(freqs), min(f for f in freqs if f >= 100)/1000.0, max(freqs)/1000.0))
+            if self.plotpanel:
+                self.plotpanel.Destroy()
+            self.plotpanel = panel
         except Exception, e:
             log.exception('Failed plotting %s', filename)
 
 
 class PlotPanel(wx.Panel):
-    """The PlotPanel has a Figure and a Canvas. OnSize events simply set a
-    flag, and the actual resizing of the figure is triggered by an Idle event."""
-    # See: http://wiki.scipy.org/Matplotlib_figure_in_a_wx_panel
+    """Base class for embedding matplotlib in wx.
+
+    The PlotPanel has a Figure and a Canvas. OnSize events simply set a
+    flag, and the actual resizing of the figure is triggered by an Idle event.
+    See: http://wiki.scipy.org/Matplotlib_figure_in_a_wx_panel
+    """
 
     def __init__(self, parent, color=None, dpi=None, **kwargs):
         from matplotlib.backends.backend_wxagg import FigureCanvasWxAgg
@@ -191,9 +217,21 @@ class PlotPanel(wx.Panel):
 
 class ZeroCrossPlotPanel(PlotPanel):
 
-    def __init__(self, parent, times, freqs, **kwargs):
+    config = {
+        'freqminmax': (15, 100),
+        'markers': (25, 40),
+        'dotcolor': 'b',
+        'dotmarker': '.',
+        'dotsize': 5,
+        'layout': 'dot_per_dot' #'fit_all',
+    }
+
+    def __init__(self, parent, times, freqs, config=None, **kwargs):
         self.times = times if times else [0.0]
         self.freqs = freqs if freqs else [0.0]
+        self.freqs = [freq / 1000.0 for freq in freqs]  # convert Hz to KHz
+        self.name = kwargs.get('name', '')
+        self.config = config if config else self.config
         PlotPanel.__init__(self, parent, **kwargs)
         self.SetColor((0xff, 0xff, 0xff))
 
@@ -201,10 +239,18 @@ class ZeroCrossPlotPanel(PlotPanel):
         if not hasattr(self, 'subplot'):
             self.subplot = self.figure.add_subplot(111)
 
-        self.subplot.plot(self.times, self.freqs, 'b,')
-        self.subplot.set_title('blah')
-        self.subplot.set_ylim(5*1000, 80*1000)
-        self.subplot.set_xlim(self.times[0], self.times[-1])
+        plot_kwargs = dict(linestyle='', markerfacecolor=self.config['dotcolor'], marker=self.config['dotmarker'], markersize=self.config['dotsize'])
+        if self.config['layout'] == 'fit_all':
+            self.subplot.plot(self.times, self.freqs, **plot_kwargs)
+            self.subplot.set_xlim(self.times[0], self.times[-1])
+            self.subplot.set_xlabel('Time (sec)')
+        elif self.config['layout'] == 'dot_per_dot':
+            self.subplot.plot(range(len(self.freqs)), self.freqs, **plot_kwargs)
+            self.subplot.set_xlabel('Dot Count')
+
+        self.subplot.set_title(self.name)
+        self.subplot.set_ylim(*self.config['freqminmax'])
+        self.subplot.set_ylabel('Frequency (KHz)')
         self.subplot.grid(axis='y')
-        self.subplot.axhline(25*1000)
-        self.subplot.axhline(40*1000)
+        for freqk in self.config['markers']:
+            self.subplot.axhline(freqk, color='r')
