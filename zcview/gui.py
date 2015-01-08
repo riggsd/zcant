@@ -4,6 +4,7 @@ ZCView GUI
 
 import os
 import os.path
+import math
 from glob import glob
 from fnmatch import fnmatch
 
@@ -39,6 +40,8 @@ class ZCViewMainFrame(wx.Frame):
         # Application State
         self.dirname = ''
         self.filename = ''
+        self.is_compressed = False
+        self.is_linear_scale = True
 
         self.plotpanel = None
 
@@ -63,6 +66,7 @@ class ZCViewMainFrame(wx.Frame):
         tool_bar.AddSeparator()
         prev_dir  = tool_bar.AddLabelTool(wx.ID_ANY, 'Previous folder', wx.Bitmap('resources/icons/chevron-left-8x.png'),
                                           shortHelp='Prev folder', longHelp='Open the previous folder (or use the `{` key)')
+        self.Bind(wx.EVT_TOOL, self.on_prev_dir, prev_dir)
         prev_file = tool_bar.AddLabelTool(wx.ID_ANY, 'Previous file',   wx.Bitmap('resources/icons/caret-left-8x.png'),
                                           shortHelp='Prev file', longHelp='Open the previous file in this folder (or use `[` key)')
         self.Bind(wx.EVT_TOOL, self.on_prev_file, prev_file)
@@ -71,6 +75,12 @@ class ZCViewMainFrame(wx.Frame):
         self.Bind(wx.EVT_TOOL, self.on_next_file, next_file)
         next_dir  = tool_bar.AddLabelTool(wx.ID_ANY, 'Next folder',     wx.Bitmap('resources/icons/chevron-right-8x.png'),
                                           shortHelp='Next folder', longHelp='Open the next folder (or use the `}` key)')
+        self.Bind(wx.EVT_TOOL, self.on_next_dir, next_dir)
+        tool_bar.AddSeparator()
+        toggle_compressed = tool_bar.AddLabelTool(wx.ID_ANY, 'Compressed view', wx.Bitmap('resources/icons/audio-spectrum-8x.png'),
+                                                  shortHelp='Toggle compressed', longHelp='Toggle compressed view on/off (or use the `c` key)')
+        self.Bind(wx.EVT_TOOL, self.on_compressed_toggle, toggle_compressed)
+
         #self.SetToolBar(tool_bar)
         tool_bar.Realize()
 
@@ -79,15 +89,20 @@ class ZCViewMainFrame(wx.Frame):
 
         # Key Bindings
         prev_file_id, next_file_id, prev_dir_id, next_dir_id = wx.NewId(), wx.NewId(), wx.NewId(), wx.NewId()
+        compressed_id, scale_id = wx.NewId(), wx.NewId()
         self.Bind(wx.EVT_MENU, self.on_prev_file, id=prev_file_id)
         self.Bind(wx.EVT_MENU, self.on_next_file, id=next_file_id)
         self.Bind(wx.EVT_MENU, self.on_prev_dir,  id=prev_dir_id)
         self.Bind(wx.EVT_MENU, self.on_next_dir,  id=next_dir_id)
+        self.Bind(wx.EVT_MENU, self.on_compressed_toggle, id=compressed_id)
+        self.Bind(wx.EVT_MENU, self.on_scale_toggle, id=scale_id)
         a_table = wx.AcceleratorTable([
             (wx.ACCEL_NORMAL, ord('['), prev_file_id),
             (wx.ACCEL_NORMAL, ord(']'), next_file_id),
-            (wx.ACCEL_NORMAL, ord('{'), prev_dir_id),
-            (wx.ACCEL_NORMAL, ord('}'), next_dir_id),
+            (wx.ACCEL_SHIFT,  ord('['), prev_dir_id),  # {
+            (wx.ACCEL_SHIFT,  ord(']'), next_dir_id),  # }
+            (wx.ACCEL_NORMAL, ord(' '), compressed_id),
+            (wx.ACCEL_NORMAL, ord('l'), scale_id),
         ])
         self.SetAcceleratorTable(a_table)
 
@@ -116,7 +131,7 @@ class ZCViewMainFrame(wx.Frame):
         files = [fname for fname in os.listdir(self.dirname) if fnmatch(fname, '*.??#') or fnmatch(fname.lower(), '*.zc')]
         i = files.index(self.filename)
         if i <= 0:
-            return  # we're at the end of the list
+            return  # we're at the start of the list
         self.load_file(self.dirname, files[i-1])
 
     def on_next_file(self, event):
@@ -129,20 +144,41 @@ class ZCViewMainFrame(wx.Frame):
 
     def on_prev_dir(self, event):
         log.debug('prev_dir: %s', event)
-        pass  # TODO
+        parent, current = os.path.split(self.dirname)
+        siblings = [p for p in os.listdir(parent) if os.path.isdir(os.path.join(parent, p))]
+        i = siblings.index(current)
+        if i <= 0:
+            return  # we're at the start of the list
+        newdir = os.path.join(parent, siblings[i-1])
+        files = [fname for fname in os.listdir(newdir) if fnmatch(fname, '*.??#') or fnmatch(fname.lower(), '*.zc')]
+        if not files:
+            return  # no anabat files in next dir
+        self.load_file(newdir, files[0])
 
     def on_next_dir(self, event):
         log.debug('next_dir: %s', event)
-        pass  # TODO
+        parent, current = os.path.split(self.dirname)
+        siblings = [p for p in os.listdir(parent) if os.path.isdir(os.path.join(parent, p))]
+        i = siblings.index(current)
+        if i == len(siblings) - 1:
+            return  # we're at the end of the list
+        newdir = os.path.join(parent, siblings[i+1])
+        files = [fname for fname in os.listdir(newdir) if fnmatch(fname, '*.??#') or fnmatch(fname.lower(), '*.zc')]
+        if not files:
+            return  # no anabat files in next dir
+        self.load_file(newdir, files[0])
 
     def load_file(self, dirname, filename):
         log.debug('load_file:  %s  %s', dirname, filename)
         path = os.path.join(dirname, filename)
+        if not path:
+            return
         times, freqs, metadata = extract_anabat(path)
         self.dirname, self.filename = dirname, filename  # only set on success
         log.debug('    %s:  times: %d  freqs: %d', filename, len(times), len(freqs))
         try:
-            panel = ZeroCrossPlotPanel(self, times, freqs, name=title_from_path(path))
+            conf = dict(compressed=self.is_compressed, scale='linear' if self.is_linear_scale else 'log')
+            panel = ZeroCrossPlotPanel(self, times, freqs, name=title_from_path(path), config=conf)
             panel.Show()
             self.statusbar.SetStatusText('%s     Dots: %5d     Fmin: %5.1fkHz     Fmax: %5.1fkHz'
                                          % (metadata.get('timestamp', None) or metadata.get('date', ''),
@@ -152,6 +188,18 @@ class ZCViewMainFrame(wx.Frame):
             self.plotpanel = panel
         except Exception, e:
             log.exception('Failed plotting %s', filename)
+
+    def on_compressed_toggle(self, event):
+        log.debug('toggling compressed view (%s)', not self.is_compressed)
+        self.is_compressed = not self.is_compressed
+        if not self.filename:
+            return
+        self.load_file(self.dirname, self.filename)
+
+    def on_scale_toggle(self, event):
+        log.debug('toggling Y scale (%s)', 'linear' if self.is_linear_scale else 'log')
+        self.is_linear_scale = not self.is_linear_scale
+        self.load_file(self.dirname, self.filename)
 
 
 class PlotPanel(wx.Panel):
@@ -215,42 +263,86 @@ class PlotPanel(wx.Panel):
         pass  # abstract, to be overridden by child classes
 
 
+def slopes(x, y):
+    """
+    Produce an array of slope values in octaves per second.
+    We very, very crudely try to compensate for the jump between pulses, but don't deal well with noise.
+    :param x:
+    :param y:
+    :return:
+    """
+    if not x or not y:
+        return []
+    elif len(x) == 1:
+        return [0.0]
+    slopes = []
+    px, py = x[0], math.log(y[0], 2)
+    s = 0.0
+    for x, y in zip(x[1:], [math.log(f, 2) for f in y[1:]]):
+        dx = x - px
+        dy = py - y  # yes, we invert negative to positive slope
+        slope = dy / dx
+        if slope > -5000:
+            slopes.append(slope)
+        else:
+            slopes.append(slopes[-1] if slopes else 0.0)  # big jumps from end of pulse to start of next pulse
+        px, py = x, y
+    slopes.append(slopes[-1])  # hack for final lonely dot
+    return slopes
+
+
 class ZeroCrossPlotPanel(PlotPanel):
 
     config = {
         'freqminmax': (15, 100),
+        'scale': 'linear',         # linear | log
         'markers': (25, 40),
         'dotcolor': 'b',
         'dotmarker': '.',
         'dotsize': 5,
-        'layout': 'dot_per_dot' #'fit_all',
+        'compressed': False,
     }
 
     def __init__(self, parent, times, freqs, config=None, **kwargs):
         self.times = times if times else [0.0]
         self.freqs = freqs if freqs else [0.0]
+        self.slopes = slopes(self.times, self.freqs)
+        #log.debug(', '.join('%0.1f'%s for s in sorted(self.slopes)))
+        log.debug('Smax: %s  Smin: %s  Sc: ?', max(self.slopes), min(self.slopes))
         self.freqs = [freq / 1000.0 for freq in freqs]  # convert Hz to KHz
         self.name = kwargs.get('name', '')
-        self.config = config if config else self.config
-        PlotPanel.__init__(self, parent, **kwargs)
+        if config:
+            self.config.update(config)
+        PlotPanel.__init__(self, parent) #, **kwargs)
         self.SetColor((0xff, 0xff, 0xff))
 
     def draw(self):
         if not hasattr(self, 'subplot'):
             self.subplot = self.figure.add_subplot(111)
 
-        plot_kwargs = dict(linestyle='', markerfacecolor=self.config['dotcolor'], marker=self.config['dotmarker'], markersize=self.config['dotsize'])
-        if self.config['layout'] == 'fit_all':
-            self.subplot.plot(self.times, self.freqs, **plot_kwargs)
+        miny, maxy = self.config['freqminmax']
+        plot_kwargs = dict(cmap='jet', vmin=0, vmax=1000, linewidths=0.0)
+        # TODO: neither of these are proper compressed or non-compressed views!
+        if self.config['compressed']:
+            self.subplot.scatter(self.times, self.freqs, c=self.slopes, **plot_kwargs)
             self.subplot.set_xlim(self.times[0], self.times[-1])
             self.subplot.set_xlabel('Time (sec)')
-        elif self.config['layout'] == 'dot_per_dot':
-            self.subplot.plot(range(len(self.freqs)), self.freqs, **plot_kwargs)
+        else:
+            x = range(len(self.freqs))
+            self.subplot.scatter(x, self.freqs, c=self.slopes, **plot_kwargs)
+            self.subplot.set_xlim(0, len(x))
             self.subplot.set_xlabel('Dot Count')
 
         self.subplot.set_title(self.name)
-        self.subplot.set_ylim(*self.config['freqminmax'])
+        self.subplot.set_yscale(self.config['scale'])
+        self.subplot.set_ylim(miny, maxy)
         self.subplot.set_ylabel('Frequency (KHz)')
-        self.subplot.grid(axis='y')
+        self.subplot.get_yaxis().set_major_formatter(matplotlib.ticker.ScalarFormatter())
+        minytick = miny if miny % 10 == 0 else miny + 10 - miny % 10
+        maxytick = maxy if maxy % 10 == 0 else maxy + 10 - maxy % 10
+        ticks = range(minytick, maxytick+1, 10)   # labels every 10kHz
+        log.debug(ticks)
+        self.subplot.get_yaxis().set_ticks(ticks)
+        self.subplot.grid(axis='y', which='both')
         for freqk in self.config['markers']:
             self.subplot.axhline(freqk, color='r')

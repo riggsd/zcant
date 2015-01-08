@@ -1,0 +1,11 @@
+ZCView Keybindings
+==================
+
+] ...... Next file
+[ ...... Prev file
+
+} ...... Next folder
+{ ...... Prev folder
+
+SPACE .. Toggle compressed view
+l ...... Toggle linear/log scale
