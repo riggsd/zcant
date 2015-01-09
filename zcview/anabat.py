@@ -29,7 +29,8 @@ def extract_anabat(fname):
         # parse header
         data_info_pointer, file_type, tape, date, loc, species, spec, note1, note2 = struct.unpack_from(ANABAT_129_HEAD_FMT, m)
         data_pointer, res1, divratio, vres = struct.unpack_from(ANABAT_129_DATA_INFO_FMT, m, data_info_pointer)
-        metadata = dict(date=date, loc=_s(loc), species=_s(species).split(','), spec=_s(spec), note1=_s(note1), note2=_s(note2))
+        species = [_s(species).split('(', 1)[0]] if '(' in species else [s.strip() for s in _s(species).split(',')]  # remove KPro junk
+        metadata = dict(date=date, loc=_s(loc), species=species, spec=_s(spec), note1=_s(note1), note2=_s(note2))
         if file_type >= 132:
             year, month, day, hour, minute, second, second_hundredths, microseconds, id_code, gps_data = struct.unpack_from(ANABAT_132_ADDL_DATA_INFO_FMT, m, 0x120)
             timestamp = datetime(year, month, day, hour, minute, second, second_hundredths * 10000 + microseconds)
