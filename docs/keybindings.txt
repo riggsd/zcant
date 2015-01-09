@@ -9,3 +9,4 @@ ZCView Keybindings
 
 SPACE .. Toggle compressed view
 l ...... Toggle linear/log scale
+p ...... Switch color palette

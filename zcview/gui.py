@@ -5,6 +5,7 @@ ZCView GUI
 import os
 import os.path
 import math
+import json
 from glob import glob
 from fnmatch import fnmatch
 
@@ -18,6 +19,17 @@ from zcview.anabat import extract_anabat
 
 import logging
 log = logging.getLogger(__name__)
+
+
+CONF_FNAME = os.path.expanduser('~/.myotisoft/zcview.ini')
+
+
+CMAP_SEQ  = ['Blues', 'BuGn', 'BuPu', 'GnBu', 'Greens', 'Greys', 'Oranges', 'OrRd', 'PuBu', 'PuBuGn', 'PuRd', 'Purples', 'RdPu', 'Reds', 'YlGn', 'YlGnBu', 'YlOrBr', 'YlOrRd']
+CMAP_SEQ2 = ['afmhot', 'autumn', 'bone', 'cool', 'copper', 'gist_heat', 'gray', 'hot', 'pink', 'spring', 'summer', 'winter']
+CMAP_DIV  = ['BrBG', 'bwr', 'coolwarm', 'PiYG', 'PRGn', 'PuOr', 'RdBu', 'RdGy', 'RdYlBu', 'RdYlGn', 'Spectral', 'seismic']
+CMAP_QUAL = ['Accent', 'Dark2', 'Paired', 'Pastel1', 'Pastel2', 'Set1', 'Set2', 'Set3']
+CMAP_MISC = ['gist_earth', 'terrain', 'ocean', 'gist_stern', 'brg', 'CMRmap', 'cubehelix', 'gnuplot', 'gnuplot2', 'gist_ncar', 'nipy_spectral', 'jet', 'rainbow', 'gist_rainbow', 'hsv', 'flag', 'prism']
+CMAPS = CMAP_SEQ + CMAP_SEQ2 + CMAP_DIV + CMAP_QUAL + CMAP_MISC
 
 
 def title_from_path(path):
@@ -40,8 +52,10 @@ class ZCViewMainFrame(wx.Frame):
         # Application State
         self.dirname = ''
         self.filename = ''
-        self.is_compressed = False
+        self.is_compressed = True
         self.is_linear_scale = True
+        self.cmap = 'jet'
+        self.read_conf()
 
         self.plotpanel = None
 
@@ -89,13 +103,14 @@ class ZCViewMainFrame(wx.Frame):
 
         # Key Bindings
         prev_file_id, next_file_id, prev_dir_id, next_dir_id = wx.NewId(), wx.NewId(), wx.NewId(), wx.NewId()
-        compressed_id, scale_id = wx.NewId(), wx.NewId()
+        compressed_id, scale_id, cmap_id = wx.NewId(), wx.NewId(), wx.NewId()
         self.Bind(wx.EVT_MENU, self.on_prev_file, id=prev_file_id)
         self.Bind(wx.EVT_MENU, self.on_next_file, id=next_file_id)
         self.Bind(wx.EVT_MENU, self.on_prev_dir,  id=prev_dir_id)
         self.Bind(wx.EVT_MENU, self.on_next_dir,  id=next_dir_id)
         self.Bind(wx.EVT_MENU, self.on_compressed_toggle, id=compressed_id)
         self.Bind(wx.EVT_MENU, self.on_scale_toggle, id=scale_id)
+        self.Bind(wx.EVT_MENU, self.on_cmap_switch, id=cmap_id)
         a_table = wx.AcceleratorTable([
             (wx.ACCEL_NORMAL, ord('['), prev_file_id),
             (wx.ACCEL_NORMAL, ord(']'), next_file_id),
@@ -103,8 +118,12 @@ class ZCViewMainFrame(wx.Frame):
             (wx.ACCEL_SHIFT,  ord(']'), next_dir_id),  # }
             (wx.ACCEL_NORMAL, ord(' '), compressed_id),
             (wx.ACCEL_NORMAL, ord('l'), scale_id),
+            (wx.ACCEL_NORMAL, ord('p'), cmap_id),
         ])
         self.SetAcceleratorTable(a_table)
+
+        if self.dirname and self.filename:
+            self.load_file(self.dirname, self.filename)
 
     def on_about(self, event):
         log.debug('about: %s', event)
@@ -124,7 +143,39 @@ class ZCViewMainFrame(wx.Frame):
             dirname = dlg.GetDirectory()
             log.debug('open: %s', os.path.join(dirname, filename))
             self.load_file(dirname, filename)
+            self.save_conf()
         dlg.Destroy()
+
+    def save_conf(self):
+        conf_dir = os.path.split(CONF_FNAME)[0]
+        try:
+            if not os.path.isdir(conf_dir):
+                os.mkdir(conf_dir)
+        except IOError, e:
+            logging.exception('Failed attempting to create conf directory: %s', conf_dir)
+
+        conf = {
+            'dirname':    self.dirname,
+            'filename':   self.filename,
+            'compressed': self.is_compressed,
+            'linear':     self.is_linear_scale,
+            'colormap':   self.cmap,
+        }
+        with open(CONF_FNAME, 'w') as outf:
+            logging.debug('Writing conf file: %s', CONF_FNAME)
+            outf.write(json.dumps(conf, indent=2))
+
+    def read_conf(self):
+        if not os.path.isfile(CONF_FNAME):
+            return False
+        with open(CONF_FNAME, 'r') as inf:
+            logging.debug('Reading conf file: %s', CONF_FNAME)
+            conf = json.load(inf)
+            self.dirname = conf.get('dirname', '')
+            self.filename = conf.get('filename', '')
+            self.is_compressed = conf.get('compressed', True)
+            self.is_linear_scale = conf.get('linear', True)
+            self.cmap = conf.get('colormap', 'jet')
 
     def on_prev_file(self, event):
         log.debug('prev_file: %s', event)
@@ -133,6 +184,7 @@ class ZCViewMainFrame(wx.Frame):
         if i <= 0:
             return  # we're at the start of the list
         self.load_file(self.dirname, files[i-1])
+        self.save_conf()
 
     def on_next_file(self, event):
         log.debug('next_file: %s', event)
@@ -141,6 +193,7 @@ class ZCViewMainFrame(wx.Frame):
         if i == len(files) - 1:
             return  # we're at the end of the list
         self.load_file(self.dirname, files[i+1])
+        self.save_conf()
 
     def on_prev_dir(self, event):
         log.debug('prev_dir: %s', event)
@@ -154,6 +207,7 @@ class ZCViewMainFrame(wx.Frame):
         if not files:
             return  # no anabat files in next dir
         self.load_file(newdir, files[0])
+        self.save_conf()
 
     def on_next_dir(self, event):
         log.debug('next_dir: %s', event)
@@ -167,9 +221,10 @@ class ZCViewMainFrame(wx.Frame):
         if not files:
             return  # no anabat files in next dir
         self.load_file(newdir, files[0])
+        self.save_conf()
 
     def load_file(self, dirname, filename):
-        log.debug('load_file:  %s  %s', dirname, filename)
+        log.debug('\n\nload_file:  %s  %s', dirname, filename)
         path = os.path.join(dirname, filename)
         if not path:
             return
@@ -177,29 +232,43 @@ class ZCViewMainFrame(wx.Frame):
         self.dirname, self.filename = dirname, filename  # only set on success
         log.debug('    %s:  times: %d  freqs: %d', filename, len(times), len(freqs))
         try:
-            conf = dict(compressed=self.is_compressed, scale='linear' if self.is_linear_scale else 'log')
+            conf = dict(compressed=self.is_compressed, colormap=self.cmap, scale='linear' if self.is_linear_scale else 'log')
             panel = ZeroCrossPlotPanel(self, times, freqs, name=title_from_path(path), config=conf)
             panel.Show()
-            self.statusbar.SetStatusText('%s     Dots: %5d     Fmin: %5.1fkHz     Fmax: %5.1fkHz'
+            self.statusbar.SetStatusText('%s     Dots: %5d     Fmin: %5.1fkHz     Fmax: %5.1fkHz     Species: %s'
                                          % (metadata.get('timestamp', None) or metadata.get('date', ''),
-                                            len(freqs), min(f for f in freqs if f >= 100)/1000.0, max(freqs)/1000.0))
+                                            len(freqs), min(f for f in freqs if f >= 100)/1000.0, max(freqs)/1000.0,
+                                            ', '.join(metadata.get('species',[]))))
             if self.plotpanel:
                 self.plotpanel.Destroy()
             self.plotpanel = panel
         except Exception, e:
             log.exception('Failed plotting %s', filename)
 
+    def reload_file(self):
+        return self.load_file(self.dirname, self.filename)
+
     def on_compressed_toggle(self, event):
         log.debug('toggling compressed view (%s)', not self.is_compressed)
         self.is_compressed = not self.is_compressed
         if not self.filename:
             return
-        self.load_file(self.dirname, self.filename)
+        self.reload_file()
+        self.save_conf()
 
     def on_scale_toggle(self, event):
         log.debug('toggling Y scale (%s)', 'linear' if self.is_linear_scale else 'log')
         self.is_linear_scale = not self.is_linear_scale
-        self.load_file(self.dirname, self.filename)
+        self.reload_file()
+        self.save_conf()
+
+    def on_cmap_switch(self, event):
+        i = CMAPS.index(self.cmap) + 1
+        i %= len(CMAPS) - 1
+        self.cmap = CMAPS[i]
+        log.debug('switching to colormap: %s', self.cmap)
+        self.reload_file()
+        self.save_conf()
 
 
 class PlotPanel(wx.Panel):
@@ -285,7 +354,7 @@ def slopes(x, y):
         if slope > -5000:
             slopes.append(slope)
         else:
-            slopes.append(slopes[-1] if slopes else 0.0)  # big jumps from end of pulse to start of next pulse
+            slopes.append(0.0)  #slopes[-1] if slopes else 0.0)  # big jumps from end of pulse to start of next pulse
         px, py = x, y
     slopes.append(slopes[-1])  # hack for final lonely dot
     return slopes
@@ -294,13 +363,11 @@ def slopes(x, y):
 class ZeroCrossPlotPanel(PlotPanel):
 
     config = {
-        'freqminmax': (15, 100),
+        'freqminmax': (15, 100),   # min and max frequency to display KHz
         'scale': 'linear',         # linear | log
-        'markers': (25, 40),
-        'dotcolor': 'b',
-        'dotmarker': '.',
-        'dotsize': 5,
-        'compressed': False,
+        'markers': (25, 40),       # reference lines KHz
+        'compressed': False,       # compressed view (True) or realtime (False)
+        'colormap': 'jet'          # named color map
     }
 
     def __init__(self, parent, times, freqs, config=None, **kwargs):
@@ -313,7 +380,7 @@ class ZeroCrossPlotPanel(PlotPanel):
         self.name = kwargs.get('name', '')
         if config:
             self.config.update(config)
-        PlotPanel.__init__(self, parent) #, **kwargs)
+        PlotPanel.__init__(self, parent, **kwargs)
         self.SetColor((0xff, 0xff, 0xff))
 
     def draw(self):
@@ -321,9 +388,11 @@ class ZeroCrossPlotPanel(PlotPanel):
             self.subplot = self.figure.add_subplot(111)
 
         miny, maxy = self.config['freqminmax']
-        plot_kwargs = dict(cmap='jet', vmin=0, vmax=1000, linewidths=0.0)
+        plot_kwargs = dict(cmap=self.config['colormap'], vmin=0, vmax=1000, linewidths=0.0)  # vmin/vmax define where we scale our colormap
         # TODO: neither of these are proper compressed or non-compressed views!
-        if self.config['compressed']:
+        if len(self.freqs) < 2:
+            self.subplot.scatter([], [])  # empty set
+        elif self.config['compressed']:
             self.subplot.scatter(self.times, self.freqs, c=self.slopes, **plot_kwargs)
             self.subplot.set_xlim(self.times[0], self.times[-1])
             self.subplot.set_xlabel('Time (sec)')
@@ -337,12 +406,14 @@ class ZeroCrossPlotPanel(PlotPanel):
         self.subplot.set_yscale(self.config['scale'])
         self.subplot.set_ylim(miny, maxy)
         self.subplot.set_ylabel('Frequency (KHz)')
+
         self.subplot.get_yaxis().set_major_formatter(matplotlib.ticker.ScalarFormatter())
-        minytick = miny if miny % 10 == 0 else miny + 10 - miny % 10
+        minytick = miny if miny % 10 == 0 else miny + 10 - miny % 10  # round up to next 10kHz tick
         maxytick = maxy if maxy % 10 == 0 else maxy + 10 - maxy % 10
         ticks = range(minytick, maxytick+1, 10)   # labels every 10kHz
-        log.debug(ticks)
         self.subplot.get_yaxis().set_ticks(ticks)
+
         self.subplot.grid(axis='y', which='both')
+
         for freqk in self.config['markers']:
             self.subplot.axhline(freqk, color='r')
