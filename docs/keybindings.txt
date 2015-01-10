@@ -10,3 +10,9 @@ ZCView Keybindings
 SPACE .. Toggle compressed view
 l ...... Toggle linear/log scale
 p ...... Switch color palette
+
+UP ..... Increase .wav conversion threshold
+DOWN ... Decrease .wav conversion threshold
+
+SHIFT+UP .... Increase .wav high-pass filter
+SHIFT+DOWN .. Decrease .wav high-pass filter

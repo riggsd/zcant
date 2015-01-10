@@ -16,6 +16,7 @@ matplotlib.interactive(True)
 matplotlib.use('WXAgg')
 
 from zcview.anabat import extract_anabat
+from zcview.conversion import wav2zc
 
 import logging
 log = logging.getLogger(__name__)
@@ -55,6 +56,8 @@ class ZCViewMainFrame(wx.Frame):
         self.is_compressed = True
         self.is_linear_scale = True
         self.cmap = 'jet'
+        self.wav_threshold = 1.0
+        self.hpfilter = 20.0
         self.read_conf()
 
         self.plotpanel = None
@@ -104,6 +107,7 @@ class ZCViewMainFrame(wx.Frame):
         # Key Bindings
         prev_file_id, next_file_id, prev_dir_id, next_dir_id = wx.NewId(), wx.NewId(), wx.NewId(), wx.NewId()
         compressed_id, scale_id, cmap_id = wx.NewId(), wx.NewId(), wx.NewId()
+        threshold_up_id, threshold_down_id, hpfilter_up_id, hpfilter_down_id = wx.NewId(), wx.NewId(), wx.NewId(), wx.NewId()
         self.Bind(wx.EVT_MENU, self.on_prev_file, id=prev_file_id)
         self.Bind(wx.EVT_MENU, self.on_next_file, id=next_file_id)
         self.Bind(wx.EVT_MENU, self.on_prev_dir,  id=prev_dir_id)
@@ -111,6 +115,10 @@ class ZCViewMainFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, self.on_compressed_toggle, id=compressed_id)
         self.Bind(wx.EVT_MENU, self.on_scale_toggle, id=scale_id)
         self.Bind(wx.EVT_MENU, self.on_cmap_switch, id=cmap_id)
+        self.Bind(wx.EVT_MENU, self.on_threshold_up, id=threshold_up_id)
+        self.Bind(wx.EVT_MENU, self.on_threshold_down, id=threshold_down_id)
+        self.Bind(wx.EVT_MENU, self.on_hpfilter_up, id=hpfilter_up_id)
+        self.Bind(wx.EVT_MENU, self.on_hpfilter_down, id=hpfilter_down_id)
         a_table = wx.AcceleratorTable([
             (wx.ACCEL_NORMAL, ord('['), prev_file_id),
             (wx.ACCEL_NORMAL, ord(']'), next_file_id),
@@ -119,11 +127,18 @@ class ZCViewMainFrame(wx.Frame):
             (wx.ACCEL_NORMAL, ord(' '), compressed_id),
             (wx.ACCEL_NORMAL, ord('l'), scale_id),
             (wx.ACCEL_NORMAL, ord('p'), cmap_id),
+            (wx.ACCEL_NORMAL, wx.WXK_UP, threshold_up_id),
+            (wx.ACCEL_NORMAL, wx.WXK_DOWN, threshold_down_id),
+            (wx.ACCEL_SHIFT,  wx.WXK_UP, hpfilter_up_id),
+            (wx.ACCEL_SHIFT,  wx.WXK_DOWN, hpfilter_down_id),
         ])
         self.SetAcceleratorTable(a_table)
 
         if self.dirname and self.filename:
-            self.load_file(self.dirname, self.filename)
+            try:
+                self.load_file(self.dirname, self.filename)
+            except Exception, e:
+                log.exception('Failed opening default file: %s', os.path.join(self.dirname, self.filename))
 
     def on_about(self, event):
         log.debug('about: %s', event)
@@ -137,7 +152,7 @@ class ZCViewMainFrame(wx.Frame):
 
     def on_open(self, event):
         log.debug('open: %s', event)
-        dlg = wx.FileDialog(self, 'Choose a file', self.dirname, '', 'Anabat files|*.*|Anabat files|*.zc', wx.OPEN)
+        dlg = wx.FileDialog(self, 'Choose a file', self.dirname, '', 'Anabat files|*.*|Anabat files|*.zc|Wave files|*.wav', wx.OPEN)
         if dlg.ShowModal() == wx.ID_OK:
             filename = dlg.GetFilename()
             dirname = dlg.GetDirectory()
@@ -179,7 +194,7 @@ class ZCViewMainFrame(wx.Frame):
 
     def on_prev_file(self, event):
         log.debug('prev_file: %s', event)
-        files = [fname for fname in os.listdir(self.dirname) if fnmatch(fname, '*.??#') or fnmatch(fname.lower(), '*.zc')]
+        files = [fname for fname in os.listdir(self.dirname) if fnmatch(fname, '*.??#') or fnmatch(fname.lower(), '*.zc') or (fnmatch(fname.lower(), '*.wav') and not fname.startswith('._'))]
         i = files.index(self.filename)
         if i <= 0:
             return  # we're at the start of the list
@@ -188,7 +203,7 @@ class ZCViewMainFrame(wx.Frame):
 
     def on_next_file(self, event):
         log.debug('next_file: %s', event)
-        files = [fname for fname in os.listdir(self.dirname) if fnmatch(fname, '*.??#') or fnmatch(fname.lower(), '*.zc')]
+        files = [fname for fname in os.listdir(self.dirname) if fnmatch(fname, '*.??#') or fnmatch(fname.lower(), '*.zc') or (fnmatch(fname.lower(), '*.wav') and not fname.startswith('._'))]
         i = files.index(self.filename)
         if i == len(files) - 1:
             return  # we're at the end of the list
@@ -203,7 +218,7 @@ class ZCViewMainFrame(wx.Frame):
         if i <= 0:
             return  # we're at the start of the list
         newdir = os.path.join(parent, siblings[i-1])
-        files = [fname for fname in os.listdir(newdir) if fnmatch(fname, '*.??#') or fnmatch(fname.lower(), '*.zc')]
+        files = [fname for fname in os.listdir(newdir) if fnmatch(fname, '*.??#') or fnmatch(fname.lower(), '*.zc') or (fnmatch(fname.lower(), '*.wav') and not fname.startswith('._'))]
         if not files:
             return  # no anabat files in next dir
         self.load_file(newdir, files[0])
@@ -217,36 +232,57 @@ class ZCViewMainFrame(wx.Frame):
         if i == len(siblings) - 1:
             return  # we're at the end of the list
         newdir = os.path.join(parent, siblings[i+1])
-        files = [fname for fname in os.listdir(newdir) if fnmatch(fname, '*.??#') or fnmatch(fname.lower(), '*.zc')]
+        files = [fname for fname in os.listdir(newdir) if fnmatch(fname, '*.??#') or fnmatch(fname.lower(), '*.zc') or (fnmatch(fname.lower(), '*.wav') and not fname.startswith('._'))]
         if not files:
             return  # no anabat files in next dir
         self.load_file(newdir, files[0])
         self.save_conf()
+
+    def extract(self, path):
+        """Extract (times, freqs, metadata) from supported filetypes"""
+        ext = os.path.splitext(path)[1].lower()
+        if ext.endswith('#') or ext == '.zc':
+            return extract_anabat(path)
+        elif ext == '.wav':
+            return wav2zc(path, threshold_factor=self.wav_threshold, hpfilter_khz=self.hpfilter)
+        else:
+            raise Exception('Unknown file type: %s', path)
 
     def load_file(self, dirname, filename):
         log.debug('\n\nload_file:  %s  %s', dirname, filename)
         path = os.path.join(dirname, filename)
         if not path:
             return
-        times, freqs, metadata = extract_anabat(path)
-        self.dirname, self.filename = dirname, filename  # only set on success
+
+        times, freqs, metadata = self.extract(path)
+        metadata['path'] = path
+        metadata['filename'] = filename
         log.debug('    %s:  times: %d  freqs: %d', filename, len(times), len(freqs))
+
+        self.plot(times, freqs, metadata)
+
+        self.dirname, self.filename, self._times, self._freqs, self._metadata = dirname, filename, times, freqs, metadata  # only set on success
+
+    def plot(self, times, freqs, metadata):
+        title = title_from_path(metadata.get('path', ''))
         try:
             conf = dict(compressed=self.is_compressed, colormap=self.cmap, scale='linear' if self.is_linear_scale else 'log')
-            panel = ZeroCrossPlotPanel(self, times, freqs, name=title_from_path(path), config=conf)
+            panel = ZeroCrossPlotPanel(self, times, freqs, name=title, config=conf)
             panel.Show()
+            min_, max_ = min(f for f in freqs if f >= 100)/1000.0, max(freqs)/1000.0  # TODO: replace with np.amax when we switch
             self.statusbar.SetStatusText('%s     Dots: %5d     Fmin: %5.1fkHz     Fmax: %5.1fkHz     Species: %s'
                                          % (metadata.get('timestamp', None) or metadata.get('date', ''),
-                                            len(freqs), min(f for f in freqs if f >= 100)/1000.0, max(freqs)/1000.0,
+                                            len(freqs), min_, max_,
                                             ', '.join(metadata.get('species',[]))))
             if self.plotpanel:
                 self.plotpanel.Destroy()
             self.plotpanel = panel
         except Exception, e:
-            log.exception('Failed plotting %s', filename)
+            log.exception('Failed plotting %s', metadata.get('filename', ''))
 
     def reload_file(self):
-        return self.load_file(self.dirname, self.filename)
+        """Re-plot without reloading file from disk"""
+        return self.plot(self._times, self._freqs, self._metadata)
 
     def on_compressed_toggle(self, event):
         log.debug('toggling compressed view (%s)', not self.is_compressed)
@@ -268,6 +304,32 @@ class ZCViewMainFrame(wx.Frame):
         self.cmap = CMAPS[i]
         log.debug('switching to colormap: %s', self.cmap)
         self.reload_file()
+        self.save_conf()
+
+    def on_threshold_up(self, event):
+        self.wav_threshold += 0.1
+        log.debug('increasing threshold to %.1f x RMS', self.wav_threshold)
+        self.load_file(self.dirname, self.filename)
+        self.save_conf()
+
+    def on_threshold_down(self, event):
+        if self.wav_threshold < 0.1:
+            return
+        self.wav_threshold -= 0.1
+        log.debug('decreasing threshold to %.1f x RMS', self.wav_threshold)
+        self.load_file(self.dirname, self.filename)
+        self.save_conf()
+
+    def on_hpfilter_up(self, event):
+        self.hpfilter += 2.5
+        log.debug('increasing high-pass filter to %.1f KHz', self.hpfilter)
+        self.load_file(self.dirname, self.filename)
+        self.save_conf()
+
+    def on_hpfilter_down(self, event):
+        self.hpfilter -= 2.5
+        log.debug('decreasing high-pass filter to %.1f KHz', self.hpfilter)
+        self.load_file(self.dirname, self.filename)
         self.save_conf()
 
 
@@ -340,7 +402,7 @@ def slopes(x, y):
     :param y:
     :return:
     """
-    if not x or not y:
+    if not len(x) or not len(y):
         return []
     elif len(x) == 1:
         return [0.0]
@@ -371,11 +433,11 @@ class ZeroCrossPlotPanel(PlotPanel):
     }
 
     def __init__(self, parent, times, freqs, config=None, **kwargs):
-        self.times = times if times else [0.0]
-        self.freqs = freqs if freqs else [0.0]
+        self.times = times if len(times) else [0.0]
+        self.freqs = freqs if len(freqs) else [0.0]
         self.slopes = slopes(self.times, self.freqs)
         #log.debug(', '.join('%0.1f'%s for s in sorted(self.slopes)))
-        log.debug('Smax: %s  Smin: %s  Sc: ?', max(self.slopes), min(self.slopes))
+        log.debug('Smax: %d OPS   Smin: %d OPS   Sc: ?', max(self.slopes), min(self.slopes))
         self.freqs = [freq / 1000.0 for freq in freqs]  # convert Hz to KHz
         self.name = kwargs.get('name', '')
         if config:
@@ -388,7 +450,7 @@ class ZeroCrossPlotPanel(PlotPanel):
             self.subplot = self.figure.add_subplot(111)
 
         miny, maxy = self.config['freqminmax']
-        plot_kwargs = dict(cmap=self.config['colormap'], vmin=0, vmax=1000, linewidths=0.0)  # vmin/vmax define where we scale our colormap
+        plot_kwargs = dict(cmap=self.config['colormap'], vmin=0, vmax=600, linewidths=0.0)  # vmin/vmax define where we scale our colormap
         # TODO: neither of these are proper compressed or non-compressed views!
         if len(self.freqs) < 2:
             self.subplot.scatter([], [])  # empty set
