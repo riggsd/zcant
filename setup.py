@@ -13,7 +13,7 @@ PY2APP_OPTIONS = {
     'argv_emulation': True,
     'optimize': 2,
     'iconfile': '/Users/driggs/workspace/zcview/resources/icons/myotisoft_icon.icns',
-    'excludes': ['scipy', 'phonon', 'qt', 'PyQt4', 'PIL', 'PROJ'],
+    'excludes': ['phonon', 'qt', 'PyQt4', 'PIL', 'PROJ'],
     'dylib_excludes': ['PyQT', 'QtCore', 'QtDeclarative', 'QtDesigner', 'QtGui', 'QtHelp', 'QtMultimedia', 'QtNetwork', 'QtOpenGL', 'QtScript', 'QtScriptTools', 'QtSql', 'QtSvg', 'QtTest', 'QtWebKit', 'QtXml', 'QtXmlPatterns',
                        'PROJ', 'PIL', 'phonon', '_codecs_cn.so', '_codecs_hk.so', '_codecs_iso2022.so', '_codecs_jp.so', '_codecs_kr.so', '_codecs_tw.so'],
     'matplotlib_backends': '-',  # only explicitly imported backends (wx)

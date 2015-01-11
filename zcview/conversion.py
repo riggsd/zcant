@@ -11,7 +11,6 @@ from __future__ import division
 
 import io
 import sys
-import time
 import wave
 import struct
 import os.path
@@ -20,21 +19,13 @@ import numpy as np
 import scipy.signal
 
 import logging
-log = logging.getLogger(__file__)
+log = logging.getLogger(__name__)
+
+from zcview import print_timing
 
 
 __all__ = 'wav2zc'
 
-
-def print_timing(func):
-    """Debug decorator for logging the time in milliseconds a function takes to execute"""
-    def wrapper(*args, **kwargs):
-        t1 = time.time()
-        res = func(*args, **kwargs)
-        t2 = time.time()
-        log.debug('%06.1f ms %s', (t2-t1)*1000.0, func.func_name)
-        return res
-    return wrapper
 
 
 # def lerp(i1, val1, i2, val2):

@@ -15,6 +15,9 @@ import matplotlib
 matplotlib.interactive(True)
 matplotlib.use('WXAgg')
 
+import numpy as np
+
+from zcview import print_timing
 from zcview.anabat import extract_anabat
 from zcview.conversion import wav2zc
 
@@ -106,7 +109,7 @@ class ZCViewMainFrame(wx.Frame):
 
         # Key Bindings
         prev_file_id, next_file_id, prev_dir_id, next_dir_id = wx.NewId(), wx.NewId(), wx.NewId(), wx.NewId()
-        compressed_id, scale_id, cmap_id = wx.NewId(), wx.NewId(), wx.NewId()
+        compressed_id, scale_id, cmap_id, cmap_back_id = wx.NewId(), wx.NewId(), wx.NewId(), wx.NewId()
         threshold_up_id, threshold_down_id, hpfilter_up_id, hpfilter_down_id = wx.NewId(), wx.NewId(), wx.NewId(), wx.NewId()
         self.Bind(wx.EVT_MENU, self.on_prev_file, id=prev_file_id)
         self.Bind(wx.EVT_MENU, self.on_next_file, id=next_file_id)
@@ -115,6 +118,7 @@ class ZCViewMainFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, self.on_compressed_toggle, id=compressed_id)
         self.Bind(wx.EVT_MENU, self.on_scale_toggle, id=scale_id)
         self.Bind(wx.EVT_MENU, self.on_cmap_switch, id=cmap_id)
+        self.Bind(wx.EVT_MENU, self.on_cmap_back,   id=cmap_back_id)
         self.Bind(wx.EVT_MENU, self.on_threshold_up, id=threshold_up_id)
         self.Bind(wx.EVT_MENU, self.on_threshold_down, id=threshold_down_id)
         self.Bind(wx.EVT_MENU, self.on_hpfilter_up, id=hpfilter_up_id)
@@ -127,6 +131,7 @@ class ZCViewMainFrame(wx.Frame):
             (wx.ACCEL_NORMAL, ord(' '), compressed_id),
             (wx.ACCEL_NORMAL, ord('l'), scale_id),
             (wx.ACCEL_NORMAL, ord('p'), cmap_id),
+            (wx.ACCEL_SHIFT,  ord('p'), cmap_back_id),
             (wx.ACCEL_NORMAL, wx.WXK_UP, threshold_up_id),
             (wx.ACCEL_NORMAL, wx.WXK_DOWN, threshold_down_id),
             (wx.ACCEL_SHIFT,  wx.WXK_UP, hpfilter_up_id),
@@ -270,10 +275,10 @@ class ZCViewMainFrame(wx.Frame):
             panel = ZeroCrossPlotPanel(self, times, freqs, name=title, config=conf)
             panel.Show()
             min_, max_ = min(f for f in freqs if f >= 100)/1000.0, max(freqs)/1000.0  # TODO: replace with np.amax when we switch
-            self.statusbar.SetStatusText('%s     Dots: %5d     Fmin: %5.1fkHz     Fmax: %5.1fkHz     Species: %s'
-                                         % (metadata.get('timestamp', None) or metadata.get('date', ''),
-                                            len(freqs), min_, max_,
-                                            ', '.join(metadata.get('species',[]))))
+            self.statusbar.SetStatusText(
+                '%s     Dots: %5d     Fmin: %5.1fkHz     Fmax: %5.1fkHz     Species: %s'
+                % (metadata.get('timestamp', None) or metadata.get('date', ''),
+                   len(freqs), min_, max_, ', '.join(metadata.get('species',[]))))
             if self.plotpanel:
                 self.plotpanel.Destroy()
             self.plotpanel = panel
@@ -306,16 +311,24 @@ class ZCViewMainFrame(wx.Frame):
         self.reload_file()
         self.save_conf()
 
+    def on_cmap_back(self, event):
+        i = CMAPS.index(self.cmap) - 1
+        i %= len(CMAPS) - 1
+        self.cmap = CMAPS[i]
+        log.debug('switching to colormap: %s', self.cmap)
+        self.reload_file()
+        self.save_conf()
+
     def on_threshold_up(self, event):
-        self.wav_threshold += 0.1
+        self.wav_threshold += 0.2
         log.debug('increasing threshold to %.1f x RMS', self.wav_threshold)
         self.load_file(self.dirname, self.filename)
         self.save_conf()
 
     def on_threshold_down(self, event):
-        if self.wav_threshold < 0.1:
+        if self.wav_threshold < 0.2:
             return
-        self.wav_threshold -= 0.1
+        self.wav_threshold -= 0.2
         log.debug('decreasing threshold to %.1f x RMS', self.wav_threshold)
         self.load_file(self.dirname, self.filename)
         self.save_conf()
@@ -394,6 +407,7 @@ class PlotPanel(wx.Panel):
         pass  # abstract, to be overridden by child classes
 
 
+@print_timing
 def slopes(x, y):
     """
     Produce an array of slope values in octaves per second.
@@ -406,19 +420,11 @@ def slopes(x, y):
         return []
     elif len(x) == 1:
         return [0.0]
-    slopes = []
-    px, py = x[0], math.log(y[0], 2)
-    s = 0.0
-    for x, y in zip(x[1:], [math.log(f, 2) for f in y[1:]]):
-        dx = x - px
-        dy = py - y  # yes, we invert negative to positive slope
-        slope = dy / dx
-        if slope > -5000:
-            slopes.append(slope)
-        else:
-            slopes.append(0.0)  #slopes[-1] if slopes else 0.0)  # big jumps from end of pulse to start of next pulse
-        px, py = x, y
-    slopes.append(slopes[-1])  # hack for final lonely dot
+    slopes = np.diff(np.log2(y)) / np.diff(np.log2(x))
+    slopes = np.append(slopes, slopes[-1])  # hack for final dot
+    slopes = -1 * slopes  # Analook inverts slope so we do also
+    slopes[slopes < -5000] = 0.0  # super-steep is probably noise or a new pulse
+    slopes[slopes > 10000] = 0.0  # TODO: refine these magic boundary values!
     return slopes
 
 

@@ -5,6 +5,10 @@ from glob import glob
 from os.path import basename
 from datetime import datetime
 
+import numpy as np
+
+from zcview import print_timing
+
 import logging
 log = logging.getLogger(__name__)
 
@@ -21,6 +25,7 @@ def _s(s):
     return s.strip('\00\t ')
 
 
+@print_timing
 def extract_anabat(fname):
     """Extract (times, frequencies, metadata) from Anabat sequence file"""
     with open(fname, 'rb') as f, contextlib.closing(mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)) as m:
@@ -40,18 +45,18 @@ def extract_anabat(fname):
 
         # parse actual sequence data
         i = data_pointer   # byte index as we scan through the file (data starts at 0x150 for v132, 0x120 for older files)
-        intervals = []
-        freqs = []  # collection of parsed frequency values
-        times = []  # collection of microsecond time values from start of file (if freq is Y axis, then time is X axis)     
+        intervals_us = np.empty(2**14, np.dtype('u4'))
+        int_i = 0
 
-        while i < size: 
+        while i < size:
             byte = Byte.unpack_from(m, i)[0]
 
             if byte <= 0x7F:
                 # Single byte is a 7-bit signed two's complement offset from previous interval
                 offset = byte if byte < 2**6 else byte - 2**7  # clever two's complement unroll
-                if intervals:
-                    intervals.append(intervals[-1] + offset)
+                if int_i > 0:
+                    intervals_us[int_i] = intervals_us[int_i-1] + offset
+                    int_i += 1
                 else:
                     log.warning('Sequence file starts with a one-byte interval diff! Skipping byte %x', byte)
                     #intervals.append(offset)  # ?!
@@ -61,7 +66,8 @@ def extract_anabat(fname):
                 accumulator = (byte & 0b00011111) << 8
                 i += 1
                 accumulator |= Byte.unpack_from(m, i)[0]
-                intervals.append(accumulator)
+                intervals_us[int_i] = accumulator
+                int_i += 1
 
             elif 0xA0 <= byte <= 0xBF:
                 # interval is contained in 21 bits, upper 5 from the remainder of this byte, next 8 from the next byte and the lower 8 from the byte after that
@@ -70,7 +76,8 @@ def extract_anabat(fname):
                 accumulator |= Byte.unpack_from(m, i)[0] << 8
                 i += 1
                 accumulator |= Byte.unpack_from(m, i)[0]
-                intervals.append(accumulator)
+                intervals_us[int_i] = accumulator
+                int_i += 1
 
             elif 0xC0 <= byte <= 0xDF:
                 # interval is contained in 29 bits, the upper 5 from the remainder of this byte, the next 8 from the following byte etc.
@@ -81,7 +88,8 @@ def extract_anabat(fname):
                 accumulator |= Byte.unpack_from(m, i)[0] << 8
                 i += 1
                 accumulator |= Byte.unpack_from(m, i)[0]
-                intervals.append(accumulator)
+                intervals_us[int_i] = accumulator
+                int_i += 1
 
             elif 0xE0 <= byte <= 0xFF:
                 # status byte which applies to the next n dots
@@ -91,22 +99,20 @@ def extract_anabat(fname):
                 # TODO: not yet supported
 
             else:
-                min_, max_ = min(freqs) if any(freqs) else 0, max(freqs) if any(freqs) else 0
-                log.warning('%s\tDots: %d\t\tMinF: %d\t\tMaxF: %d', basename(fname), len(freqs), min_, max_)
-                raise Exception('Unknown byte %X' % byte)
+                raise Exception('Unknown byte %X at offset 0x%X' % (byte, i))
 
-            #times.append(times[-1] + (intervals[-1] * 1.0e-6) if times else 0.0)
             i += 1
 
-    freqs = [divratio * 0.5 / (i * 1.0e-6) for i in intervals if i]
-    times = []
-    for i, interval in enumerate(intervals):
-        times.append(times[-1] + (interval * 1.0e-6) if i != 0 else 0.0)
+    intervals_us = intervals_us[:int_i]  # TODO: should we free unused memory?
+    intervals_s = intervals_us * 1e-6
+    times_s = np.cumsum(intervals_s)
+    freqs_hz = 1 / intervals_s * (divratio / 2)
+    freqs_hz[freqs_hz == np.inf] = 0  # fix divide-by-zero
 
-    min_, max_ = min(freqs) if any(freqs) else 0, max(freqs) if any(freqs) else 0
-    log.debug('%s\tDots: %d\tMinF: %d\tMaxF: %d', basename(fname), len(freqs), min_, max_)
+    min_, max_ = min(freqs_hz) if any(freqs_hz) else 0, max(freqs_hz) if any(freqs_hz) else 0
+    log.debug('%s\tDots: %d\tMinF: %.1f\tMaxF: %.1f', basename(fname), len(freqs_hz), min_/1000.0, max_/1000.0)
     
-    return times, freqs, metadata
+    return times_s, freqs_hz, metadata
 
 
 if __name__ == '__main__':

@@ -1,15 +1,28 @@
 ZCView Keybindings
 ==================
 
+
+Navigation
+----------
+
 ] ...... Next file
 [ ...... Prev file
 
 } ...... Next folder
 { ...... Prev folder
 
-SPACE .. Toggle compressed view
-l ...... Toggle linear/log scale
-p ...... Switch color palette
+
+View
+----
+
+SPACE .... Toggle compressed view
+l ........ Toggle linear/log scale
+p ........ Switch color palette
+SHIFT+p .. Back color palette
+
+
+WAV Conversion
+--------------
 
 UP ..... Increase .wav conversion threshold
 DOWN ... Decrease .wav conversion threshold
