@@ -63,6 +63,15 @@ class ZCViewMainFrame(wx.Frame):
         self.hpfilter = 20.0
         self.read_conf()
 
+        self.init_gui()
+
+        if self.dirname and self.filename:
+            try:
+                self.load_file(self.dirname, self.filename)
+            except Exception, e:
+                log.exception('Failed opening default file: %s', os.path.join(self.dirname, self.filename))
+
+    def init_gui(self):
         self.plotpanel = None
 
         # Menu Bar
@@ -80,29 +89,41 @@ class ZCViewMainFrame(wx.Frame):
         self.SetMenuBar(menu_bar)
 
         # Nav Toolbar
-        tool_bar = self.CreateToolBar()
-        open_item = tool_bar.AddLabelTool(wx.ID_ANY, 'Open file',       wx.Bitmap('resources/icons/file-8x.png'), shortHelp='Open')
+        tool_bar = self.CreateToolBar( wx.TB_TEXT)
+        open_item = tool_bar.AddLabelTool(wx.ID_ANY, 'Open',       wx.Bitmap('resources/icons/file-8x.png'), shortHelp='Open')
         self.Bind(wx.EVT_TOOL, self.on_open, open_item)
+
         tool_bar.AddSeparator()
-        prev_dir  = tool_bar.AddLabelTool(wx.ID_ANY, 'Previous folder', wx.Bitmap('resources/icons/chevron-left-8x.png'),
+        prev_dir  = tool_bar.AddLabelTool(wx.ID_ANY, 'Prev Folder', wx.Bitmap('resources/icons/chevron-left-8x.png'),
                                           shortHelp='Prev folder', longHelp='Open the previous folder (or use the `{` key)')
         self.Bind(wx.EVT_TOOL, self.on_prev_dir, prev_dir)
-        prev_file = tool_bar.AddLabelTool(wx.ID_ANY, 'Previous file',   wx.Bitmap('resources/icons/caret-left-8x.png'),
+        prev_file = tool_bar.AddLabelTool(wx.ID_ANY, 'Prev File',   wx.Bitmap('resources/icons/caret-left-8x.png'),
                                           shortHelp='Prev file', longHelp='Open the previous file in this folder (or use `[` key)')
         self.Bind(wx.EVT_TOOL, self.on_prev_file, prev_file)
-        next_file = tool_bar.AddLabelTool(wx.ID_ANY, 'Next file',       wx.Bitmap('resources/icons/caret-right-8x.png'),
+        next_file = tool_bar.AddLabelTool(wx.ID_ANY, 'Next File',   wx.Bitmap('resources/icons/caret-right-8x.png'),
                                           shortHelp='Next file', longHelp='Open the next file in this folder (or use the `]` key)')
         self.Bind(wx.EVT_TOOL, self.on_next_file, next_file)
-        next_dir  = tool_bar.AddLabelTool(wx.ID_ANY, 'Next folder',     wx.Bitmap('resources/icons/chevron-right-8x.png'),
+        next_dir  = tool_bar.AddLabelTool(wx.ID_ANY, 'Next Folder', wx.Bitmap('resources/icons/chevron-right-8x.png'),
                                           shortHelp='Next folder', longHelp='Open the next folder (or use the `}` key)')
         self.Bind(wx.EVT_TOOL, self.on_next_dir, next_dir)
+
         tool_bar.AddSeparator()
-        toggle_compressed = tool_bar.AddLabelTool(wx.ID_ANY, 'Compressed view', wx.Bitmap('resources/icons/audio-spectrum-8x.png'),
+        toggle_compressed = tool_bar.AddLabelTool(wx.ID_ANY, 'Compressed', wx.Bitmap('resources/icons/audio-spectrum-8x.png'),
                                                   shortHelp='Toggle compressed', longHelp='Toggle compressed view on/off (or use the `c` key)')
         self.Bind(wx.EVT_TOOL, self.on_compressed_toggle, toggle_compressed)
 
+        tool_bar.AddSeparator()
+
         #self.SetToolBar(tool_bar)
         tool_bar.Realize()
+
+        # Main layout
+        self.main_grid = wx.FlexGridSizer(rows=2)
+
+        # Control Panel
+        self.control_panel = wx.Panel(self)
+        self.threshold_spinctl = wx.SpinCtrl(self, value=str(self.wav_threshold))  #, pos=(150, 75), size=(60, -1))
+        self.threshold_spinctl.SetRange(0.0, 10.0)
 
         # Status Bar
         self.statusbar = self.CreateStatusBar()
@@ -138,12 +159,6 @@ class ZCViewMainFrame(wx.Frame):
             (wx.ACCEL_SHIFT,  wx.WXK_DOWN, hpfilter_down_id),
         ])
         self.SetAcceleratorTable(a_table)
-
-        if self.dirname and self.filename:
-            try:
-                self.load_file(self.dirname, self.filename)
-            except Exception, e:
-                log.exception('Failed opening default file: %s', os.path.join(self.dirname, self.filename))
 
     def on_about(self, event):
         log.debug('about: %s', event)
@@ -247,7 +262,7 @@ class ZCViewMainFrame(wx.Frame):
         """Extract (times, freqs, metadata) from supported filetypes"""
         ext = os.path.splitext(path)[1].lower()
         if ext.endswith('#') or ext == '.zc':
-            return extract_anabat(path)
+            return extract_anabat(path, hpfilter_khz=self.hpfilter)
         elif ext == '.wav':
             return wav2zc(path, threshold_factor=self.wav_threshold, hpfilter_khz=self.hpfilter)
         else:
@@ -271,7 +286,7 @@ class ZCViewMainFrame(wx.Frame):
     def plot(self, times, freqs, metadata):
         title = title_from_path(metadata.get('path', ''))
         try:
-            conf = dict(compressed=self.is_compressed, colormap=self.cmap, scale='linear' if self.is_linear_scale else 'log')
+            conf = dict(compressed=self.is_compressed, colormap=self.cmap, scale='linear' if self.is_linear_scale else 'log', filter_markers=(self.hpfilter,))
             panel = ZeroCrossPlotPanel(self, times, freqs, name=title, config=conf)
             panel.Show()
             min_, max_ = min(f for f in freqs if f >= 100)/1000.0, max(freqs)/1000.0  # TODO: replace with np.amax when we switch
@@ -433,7 +448,8 @@ class ZeroCrossPlotPanel(PlotPanel):
     config = {
         'freqminmax': (15, 100),   # min and max frequency to display KHz
         'scale': 'linear',         # linear | log
-        'markers': (25, 40),       # reference lines KHz
+        'markers': (25, 40),       # reference lines kHz
+        'filter_markers': (20.0,), # reference lines kHz
         'compressed': False,       # compressed view (True) or realtime (False)
         'colormap': 'jet'          # named color map
     }
@@ -485,3 +501,6 @@ class ZeroCrossPlotPanel(PlotPanel):
 
         for freqk in self.config['markers']:
             self.subplot.axhline(freqk, color='r')
+
+        for freqk in self.config['filter_markers']:
+            self.subplot.axhline(freqk, color='b', linestyle='--')

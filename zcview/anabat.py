@@ -26,7 +26,15 @@ def _s(s):
 
 
 @print_timing
-def extract_anabat(fname):
+def hpf_zc(times_s, freqs_hz, cutoff_freq_hz):
+    hpf_mask = np.where(freqs_hz > cutoff_freq_hz)
+    junk_count = len(freqs_hz) - np.count_nonzero(hpf_mask)
+    print 'Throwing out %d dots of %d (%.1f%%)' % (junk_count, len(freqs_hz), junk_count/len(freqs_hz)*100)
+    return times_s[hpf_mask], freqs_hz[hpf_mask]
+
+
+@print_timing
+def extract_anabat(fname, hpfilter_khz=8.0):
     """Extract (times, frequencies, metadata) from Anabat sequence file"""
     with open(fname, 'rb') as f, contextlib.closing(mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)) as m:
         size = len(m)
@@ -111,7 +119,9 @@ def extract_anabat(fname):
 
     min_, max_ = min(freqs_hz) if any(freqs_hz) else 0, max(freqs_hz) if any(freqs_hz) else 0
     log.debug('%s\tDots: %d\tMinF: %.1f\tMaxF: %.1f', basename(fname), len(freqs_hz), min_/1000.0, max_/1000.0)
-    
+
+    times_s, freqs_hz = hpf_zc(times_s, freqs_hz, 0.95*hpfilter_khz*1000)
+
     return times_s, freqs_hz, metadata
 
 
