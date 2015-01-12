@@ -2,20 +2,25 @@
 ZCView GUI
 """
 
+# See: http://wiki.scipy.org/Cookbook/Matplotlib/EmbeddingInWx
+#
+#
+
 import os
 import os.path
-import math
 import json
-from glob import glob
 from fnmatch import fnmatch
 
 import wx
 
+import numpy as np
+
 import matplotlib
 matplotlib.interactive(True)
 matplotlib.use('WXAgg')
-
-import numpy as np
+from matplotlib.figure import Figure
+import matplotlib.ticker
+import matplotlib.gridspec
 
 from zcview import print_timing
 from zcview.anabat import extract_anabat
@@ -118,12 +123,12 @@ class ZCViewMainFrame(wx.Frame):
         tool_bar.Realize()
 
         # Main layout
-        self.main_grid = wx.FlexGridSizer(rows=2)
+        #self.main_grid = wx.FlexGridSizer(rows=2)
 
         # Control Panel
-        self.control_panel = wx.Panel(self)
-        self.threshold_spinctl = wx.SpinCtrl(self, value=str(self.wav_threshold))  #, pos=(150, 75), size=(60, -1))
-        self.threshold_spinctl.SetRange(0.0, 10.0)
+        #self.control_panel = wx.Panel(self)
+        #self.threshold_spinctl = wx.SpinCtrl(self, value=str(self.wav_threshold))  #, pos=(150, 75), size=(60, -1))
+        #self.threshold_spinctl.SetRange(0.0, 10.0)
 
         # Status Bar
         self.statusbar = self.CreateStatusBar()
@@ -285,18 +290,21 @@ class ZCViewMainFrame(wx.Frame):
 
     def plot(self, times, freqs, metadata):
         title = title_from_path(metadata.get('path', ''))
+        conf = dict(compressed=self.is_compressed, colormap=self.cmap, scale='linear' if self.is_linear_scale else 'log', filter_markers=(self.hpfilter,))
         try:
-            conf = dict(compressed=self.is_compressed, colormap=self.cmap, scale='linear' if self.is_linear_scale else 'log', filter_markers=(self.hpfilter,))
             panel = ZeroCrossPlotPanel(self, times, freqs, name=title, config=conf)
             panel.Show()
+
             min_, max_ = min(f for f in freqs if f >= 100)/1000.0, max(freqs)/1000.0  # TODO: replace with np.amax when we switch
             self.statusbar.SetStatusText(
                 '%s     Dots: %5d     Fmin: %5.1fkHz     Fmax: %5.1fkHz     Species: %s'
                 % (metadata.get('timestamp', None) or metadata.get('date', ''),
                    len(freqs), min_, max_, ', '.join(metadata.get('species',[]))))
+
             if self.plotpanel:
-                self.plotpanel.Destroy()
+                self.plotpanel.Destroy()  # out with the old, in with the new
             self.plotpanel = panel
+
         except Exception, e:
             log.exception('Failed plotting %s', metadata.get('filename', ''))
 
@@ -368,6 +376,8 @@ class PlotPanel(wx.Panel):
     flag, and the actual resizing of the figure is triggered by an Idle event.
     See: http://wiki.scipy.org/Matplotlib_figure_in_a_wx_panel
     """
+    # TODO: look into this implementation: http://fides.fe.uni-lj.si/pyopus/doc/wxmplplot.html
+    #       http://sukhbinder.wordpress.com/2013/12/19/matplotlib-with-wxpython-example-with-panzoom-functionality/
 
     def __init__(self, parent, color=None, dpi=None, **kwargs):
         from matplotlib.backends.backend_wxagg import FigureCanvasWxAgg
@@ -383,9 +393,13 @@ class PlotPanel(wx.Panel):
         wx.Panel.__init__(self, parent, **kwargs)
 
         # initialize matplotlib stuff
-        self.figure = Figure(None, dpi)
+        self.figure = Figure(None, dpi, frameon=True, tight_layout=False)
         self.canvas = FigureCanvasWxAgg(self, -1, self.figure)
         self.SetColor(color)
+
+        # Wire up mouse event
+        #self.canvas.mpl_connect('motion_notify_event', self.on_mouse_motion)
+        #self.canvas.Bind(wx.EVT_ENTER_WINDOW, self.ChangeCursor)
 
         self._SetSize()
         self.draw()
@@ -414,9 +428,14 @@ class PlotPanel(wx.Panel):
 
     def _SetSize(self):
         pixels = tuple(self.parent.GetClientSize())
+        inches = float(pixels[0])/self.figure.get_dpi(), float(pixels[1])/self.figure.get_dpi()
         self.SetSize(pixels)
         self.canvas.SetSize(pixels)
-        self.figure.set_size_inches( float(pixels[0])/self.figure.get_dpi(), float(pixels[1])/self.figure.get_dpi() )
+        self.figure.set_size_inches(inches)
+        log.debug('_SetSize  DPI: %s  pixels: %s  inches: %s', self.figure.get_dpi(), pixels, inches)
+
+    def on_mouse_motion(self, event):
+        pass  # abstract, to be overridden by child classes
 
     def draw(self):
         pass  # abstract, to be overridden by child classes
@@ -432,12 +451,13 @@ def slopes(x, y):
     :return:
     """
     if not len(x) or not len(y):
-        return []
+        return np.array([])
     elif len(x) == 1:
-        return [0.0]
+        return np.array([0.0])
     slopes = np.diff(np.log2(y)) / np.diff(np.log2(x))
     slopes = np.append(slopes, slopes[-1])  # hack for final dot
     slopes = -1 * slopes  # Analook inverts slope so we do also
+    log.debug('Smax: %d OPS   Smin: %d OPS', np.amax(slopes), np.amin(slopes))
     slopes[slopes < -5000] = 0.0  # super-steep is probably noise or a new pulse
     slopes[slopes > 10000] = 0.0  # TODO: refine these magic boundary values!
     return slopes
@@ -455,52 +475,87 @@ class ZeroCrossPlotPanel(PlotPanel):
     }
 
     def __init__(self, parent, times, freqs, config=None, **kwargs):
-        self.times = times if len(times) else [0.0]
-        self.freqs = freqs if len(freqs) else [0.0]
+        self.times = times if len(times) else np.array([0.0])
+        self.freqs = freqs if len(freqs) else np.array([0.0])
         self.slopes = slopes(self.times, self.freqs)
-        #log.debug(', '.join('%0.1f'%s for s in sorted(self.slopes)))
-        log.debug('Smax: %d OPS   Smin: %d OPS   Sc: ?', max(self.slopes), min(self.slopes))
-        self.freqs = [freq / 1000.0 for freq in freqs]  # convert Hz to KHz
+        self.freqs = self.freqs / 1000  # convert Hz to KHz
         self.name = kwargs.get('name', '')
         if config:
             self.config.update(config)
+
         PlotPanel.__init__(self, parent, **kwargs)
+
         self.SetColor((0xff, 0xff, 0xff))
 
     def draw(self):
-        if not hasattr(self, 'subplot'):
-            self.subplot = self.figure.add_subplot(111)
+        # TODO: recycle the figure with `self.fig.clear()` rather than creating new panel and figure each refresh!
+
+        gs = matplotlib.gridspec.GridSpec(1, 3, width_ratios=[85, 5, 10], wspace=0.025)
+
+        # Main dot scatter plot
+        self.dot_plot = self.figure.add_subplot(gs[0]) #axes([0,0,1.0,1.0])  #[0, 0, 0.84, 1.0])
 
         miny, maxy = self.config['freqminmax']
         plot_kwargs = dict(cmap=self.config['colormap'], vmin=0, vmax=600, linewidths=0.0)  # vmin/vmax define where we scale our colormap
         # TODO: neither of these are proper compressed or non-compressed views!
         if len(self.freqs) < 2:
-            self.subplot.scatter([], [])  # empty set
+            dot_scatter = self.dot_plot.scatter([], [])  # empty set
         elif self.config['compressed']:
-            self.subplot.scatter(self.times, self.freqs, c=self.slopes, **plot_kwargs)
-            self.subplot.set_xlim(self.times[0], self.times[-1])
-            self.subplot.set_xlabel('Time (sec)')
+            dot_scatter = self.dot_plot.scatter(self.times, self.freqs, c=self.slopes, **plot_kwargs)
+            self.dot_plot.set_xlim(self.times[0], self.times[-1])
+            self.dot_plot.set_xlabel('Time (sec)')
         else:
             x = range(len(self.freqs))
-            self.subplot.scatter(x, self.freqs, c=self.slopes, **plot_kwargs)
-            self.subplot.set_xlim(0, len(x))
-            self.subplot.set_xlabel('Dot Count')
+            dot_scatter = self.dot_plot.scatter(x, self.freqs, c=self.slopes, **plot_kwargs)
+            self.dot_plot.set_xlim(0, len(x))
+            self.dot_plot.set_xlabel('Dot Count')
 
-        self.subplot.set_title(self.name)
-        self.subplot.set_yscale(self.config['scale'])
-        self.subplot.set_ylim(miny, maxy)
-        self.subplot.set_ylabel('Frequency (KHz)')
+        self.dot_plot.set_title(self.name)
+        self.dot_plot.set_yscale(self.config['scale'])
+        self.dot_plot.set_ylim(miny, maxy)
+        self.dot_plot.set_ylabel('Frequency (KHz)')
 
-        self.subplot.get_yaxis().set_major_formatter(matplotlib.ticker.ScalarFormatter())
+        self.dot_plot.get_yaxis().set_major_formatter(matplotlib.ticker.ScalarFormatter())
         minytick = miny if miny % 10 == 0 else miny + 10 - miny % 10  # round up to next 10kHz tick
         maxytick = maxy if maxy % 10 == 0 else maxy + 10 - maxy % 10
         ticks = range(minytick, maxytick+1, 10)   # labels every 10kHz
-        self.subplot.get_yaxis().set_ticks(ticks)
+        self.dot_plot.get_yaxis().set_ticks(ticks)
 
-        self.subplot.grid(axis='y', which='both')
+        self.dot_plot.grid(axis='y', which='both')
 
         for freqk in self.config['markers']:
-            self.subplot.axhline(freqk, color='r')
+            self.dot_plot.axhline(freqk, color='r')
 
         for freqk in self.config['filter_markers']:
-            self.subplot.axhline(freqk, color='b', linestyle='--')
+            self.dot_plot.axhline(freqk, color='b', linestyle='--')
+
+        # Colorbar plot
+        cbar_plot = self.figure.add_subplot(gs[1]) #axes([0.85, 0, 0.05, 1.0])
+        cbar_plot.set_title('Slope')
+        cbar = self.figure.colorbar(dot_scatter, cax=cbar_plot, ticks=[])
+        cbar.ax.set_yticklabels([])
+
+        # Hist plot
+
+        hist_plot = self.figure.add_subplot(gs[2]) #axes([0.91, 0, 0.09, 1.0], sharey=self.dot_plot)
+        hist_plot.set_title('Freqs')
+
+        bins = int(round((maxy - miny) / 2.5))
+        hist_plot.hist(self.freqs, orientation='horizontal', bins=bins)
+        hist_plot.set_yscale(self.config['scale'])
+        hist_plot.set_ylim(miny, maxy)
+        hist_plot.get_yaxis().set_ticks(ticks)
+        hist_plot.yaxis.tick_right()
+        hist_plot.grid(axis='y', which='both')
+        hist_plot.xaxis.set_ticks([])
+
+        for freqk in self.config['markers']:
+            hist_plot.axhline(freqk, color='r')
+
+        for freqk in self.config['filter_markers']:
+            hist_plot.axhline(freqk, color='b', linestyle='--')
+
+    def on_mouse_motion(self, event):
+        if event.inaxes:
+            x, y = event.xdata, event.ydata
+            #print x, y
