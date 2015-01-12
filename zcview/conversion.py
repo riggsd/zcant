@@ -94,12 +94,12 @@ def noise_gate(signal, threshold_factor):
 @print_timing
 def zero_cross(signal, samplerate, divratio):
     # straight zero-cross
-    crossings = np.where(np.diff(np.sign(signal)))[0][::divratio]  # indexes
+    crossings = np.where(np.diff(np.sign(signal)))[0][::divratio*2]  # indexes
     print 'Extracted %d crossings' % len(crossings)
     # crossings = np.array([i - signal[i] / (signal[i+1] - signal[i]) for i in crossings])  # interpolate  # FIXME: this is slow
     times_s = crossings / samplerate
     intervals_s = np.ediff1d(times_s, to_end=0)
-    freqs_hz = 1 / intervals_s * (divratio / 2)
+    freqs_hz = 1 / intervals_s * divratio
     freqs_hz[freqs_hz == np.inf] = 0  # fix divide-by-zero
     return times_s, freqs_hz
 
