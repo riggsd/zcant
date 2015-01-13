@@ -6,6 +6,8 @@ ZCView GUI
 #
 #
 
+from __future__ import division
+
 import os
 import os.path
 import json
@@ -65,6 +67,7 @@ class ZCViewMainFrame(wx.Frame):
         self.is_linear_scale = True
         self.cmap = 'jet'
         self.wav_threshold = 1.0
+        self.wav_divratio = 8
         self.hpfilter = 20.0
         self.read_conf()
 
@@ -291,7 +294,7 @@ class ZCViewMainFrame(wx.Frame):
         if ext.endswith('#') or ext == '.zc':
             return extract_anabat(path, hpfilter_khz=self.hpfilter)
         elif ext == '.wav':
-            return wav2zc(path, threshold_factor=self.wav_threshold, hpfilter_khz=self.hpfilter)
+            return wav2zc(path, divratio=self.wav_divratio, threshold_factor=self.wav_threshold, hpfilter_khz=self.hpfilter)
         else:
             raise Exception('Unknown file type: %s', path)
 
@@ -302,6 +305,7 @@ class ZCViewMainFrame(wx.Frame):
             return
 
         times, freqs, metadata = self.extract(path)
+
         metadata['path'] = path
         metadata['filename'] = filename
         log.debug('    %s:  times: %d  freqs: %d', filename, len(times), len(freqs))
@@ -317,11 +321,13 @@ class ZCViewMainFrame(wx.Frame):
             panel = ZeroCrossPlotPanel(self, times, freqs, name=title, config=conf)
             panel.Show()
 
-            min_, max_ = min(f for f in freqs if f >= 100)/1000.0, max(freqs)/1000.0  # TODO: replace with np.amax when we switch
+            timestamp = metadata.get('timestamp', None) or metadata.get('date', '')
+            if hasattr(timestamp, 'strftime'):
+                timestamp = timestamp.strftime('%Y-%m-%d %H:%M:%S')
+            min_, max_ = np.amin(freqs[freqs >= 100])/1000.0, np.amax(freqs)/1000.0
             self.statusbar.SetStatusText(
                 '%s     Dots: %5d     Fmin: %5.1fkHz     Fmax: %5.1fkHz     Species: %s'
-                % (metadata.get('timestamp', None) or metadata.get('date', ''),
-                   len(freqs), min_, max_, ', '.join(metadata.get('species',[]))))
+                % (timestamp, len(freqs), min_, max_, ', '.join(metadata.get('species',[]))))
 
             if self.plotpanel:
                 self.plotpanel.Destroy()  # out with the old, in with the new

@@ -85,7 +85,7 @@ def highpassfilter(signal, samplerate, cutoff_freq_hz, filter_order=6):
 @print_timing
 def noise_gate(signal, threshold_factor):
     threshold = threshold_factor * rms(signal)
-    print 'RMS: %.1f  threshold: %0.1f' % (threshold, rms(signal))
+    log.debug('RMS: %.1f  threshold: %0.1f' % (threshold, rms(signal)))
     # ignore everything below threshold amplitude (and convert to DC!)
     signal[signal < threshold] = 0
     return signal
@@ -95,7 +95,7 @@ def noise_gate(signal, threshold_factor):
 def zero_cross(signal, samplerate, divratio):
     # straight zero-cross
     crossings = np.where(np.diff(np.sign(signal)))[0][::divratio*2]  # indexes
-    print 'Extracted %d crossings' % len(crossings)
+    log.debug('Extracted %d crossings' % len(crossings))
     # crossings = np.array([i - signal[i] / (signal[i+1] - signal[i]) for i in crossings])  # interpolate  # FIXME: this is slow
     times_s = crossings / samplerate
     intervals_s = np.ediff1d(times_s, to_end=0)
@@ -106,9 +106,9 @@ def zero_cross(signal, samplerate, divratio):
 
 @print_timing
 def hpf_zc(times_s, freqs_hz, cutoff_freq_hz):
-    hpf_mask = np.where(freqs_hz > 0.9 * cutoff_freq_hz)
+    hpf_mask = np.where(freqs_hz > cutoff_freq_hz)
     junk_count = len(freqs_hz) - np.count_nonzero(hpf_mask)
-    print 'Throwing out %d dots of %d (%.1f%%)' % (junk_count, len(freqs_hz), junk_count/len(freqs_hz)*100)
+    log.debug('Throwing out %d dots of %d (%.1f%%)' % (junk_count, len(freqs_hz), junk_count/len(freqs_hz)*100))
     return times_s[hpf_mask], freqs_hz[hpf_mask]
 
 
