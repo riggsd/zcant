@@ -5,8 +5,8 @@ ZCView Keybindings
 Navigation
 ----------
 
-] ...... Next file
-[ ...... Prev file
+] ...... Next file (or F4)
+[ ...... Prev file (or F3)
 
 } ...... Next folder
 { ...... Prev folder
@@ -19,6 +19,7 @@ SPACE .... Toggle compressed view
 l ........ Toggle linear/log scale
 p ........ Switch color palette
 SHIFT+p .. Back color palette
+CMD+s .... Save .PNG plot image
 
 
 WAV Conversion

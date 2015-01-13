@@ -137,6 +137,7 @@ class ZCViewMainFrame(wx.Frame):
         prev_file_id, next_file_id, prev_dir_id, next_dir_id = wx.NewId(), wx.NewId(), wx.NewId(), wx.NewId()
         compressed_id, scale_id, cmap_id, cmap_back_id = wx.NewId(), wx.NewId(), wx.NewId(), wx.NewId()
         threshold_up_id, threshold_down_id, hpfilter_up_id, hpfilter_down_id = wx.NewId(), wx.NewId(), wx.NewId(), wx.NewId()
+        save_image_id = wx.NewId()
         self.Bind(wx.EVT_MENU, self.on_prev_file, id=prev_file_id)
         self.Bind(wx.EVT_MENU, self.on_next_file, id=next_file_id)
         self.Bind(wx.EVT_MENU, self.on_prev_dir,  id=prev_dir_id)
@@ -149,21 +150,42 @@ class ZCViewMainFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, self.on_threshold_down, id=threshold_down_id)
         self.Bind(wx.EVT_MENU, self.on_hpfilter_up, id=hpfilter_up_id)
         self.Bind(wx.EVT_MENU, self.on_hpfilter_down, id=hpfilter_down_id)
+        self.Bind(wx.EVT_MENU, self.on_save_image, id=save_image_id)
         a_table = wx.AcceleratorTable([
-            (wx.ACCEL_NORMAL, ord('['), prev_file_id),
-            (wx.ACCEL_NORMAL, ord(']'), next_file_id),
+
+            (wx.ACCEL_NORMAL, ord('['),  prev_file_id),
+            (wx.ACCEL_NORMAL, wx.WXK_F3, prev_file_id),
+            (wx.ACCEL_NORMAL, ord(']'),  next_file_id),
+            (wx.ACCEL_NORMAL, wx.WXK_F4, next_file_id),
+
             (wx.ACCEL_SHIFT,  ord('['), prev_dir_id),  # {
             (wx.ACCEL_SHIFT,  ord(']'), next_dir_id),  # }
-            (wx.ACCEL_NORMAL, ord(' '), compressed_id),
+
+            (wx.ACCEL_NORMAL, wx.WXK_SPACE, compressed_id),
             (wx.ACCEL_NORMAL, ord('l'), scale_id),
+
             (wx.ACCEL_NORMAL, ord('p'), cmap_id),
             (wx.ACCEL_SHIFT,  ord('p'), cmap_back_id),
+
             (wx.ACCEL_NORMAL, wx.WXK_UP, threshold_up_id),
             (wx.ACCEL_NORMAL, wx.WXK_DOWN, threshold_down_id),
+
             (wx.ACCEL_SHIFT,  wx.WXK_UP, hpfilter_up_id),
             (wx.ACCEL_SHIFT,  wx.WXK_DOWN, hpfilter_down_id),
+
+            (wx.ACCEL_CMD,    ord('s'), save_image_id)
         ])
         self.SetAcceleratorTable(a_table)
+
+    def on_save_image(self, event):
+        if not self.plotpanel or not self.filename or not self.dirname:
+            return
+        imagename = os.path.splitext(os.path.join(self.dirname, self.filename))[0] + '.png'
+        log.debug('Saving image: %s', imagename)
+        try:
+            self.plotpanel.figure.savefig(imagename)
+        except Exception, e:
+            log.exception('Failed saving image: %s', imagename)
 
     def on_about(self, event):
         log.debug('about: %s', event)
