@@ -10,6 +10,7 @@ from __future__ import division
 
 import os
 import os.path
+import sys
 import json
 from fnmatch import fnmatch
 from bisect import bisect
@@ -54,6 +55,11 @@ def title_from_path(path):
         return '%s %s %s' % (parent, os.sep, fname)
     else:
         return fname
+
+
+def beep():
+    sys.stdout.write('\a')
+    sys.stdout.flush()
 
 
 class ZCViewMainFrame(wx.Frame):
@@ -259,49 +265,65 @@ class ZCViewMainFrame(wx.Frame):
             self.is_linear_scale = conf.get('linear', True)
             self.cmap = conf.get('colormap', 'jet')
 
+    def listdir(self, dirname):
+        """Produce a list of supported filenames in the specified directory"""
+        return [fname for fname in sorted(os.listdir(dirname), key=lambda s: s.lower()) if (fnmatch(fname, '*.??#') or fnmatch(fname.lower(), '*.zc') or fnmatch(fname.lower(), '*.wav')) and not fname.startswith('._')]
+
     def on_prev_file(self, event):
         log.debug('prev_file: %s', event)
-        files = [fname for fname in os.listdir(self.dirname) if fnmatch(fname, '*.??#') or fnmatch(fname.lower(), '*.zc') or (fnmatch(fname.lower(), '*.wav') and not fname.startswith('._'))]
-        i = files.index(self.filename)
+        files = self.listdir(self.dirname)
+        try:
+            i = files.index(self.filename)
+        except ValueError:
+            i = bisect(files, self.filename)  # deleted out from under us?
         if i <= 0:
-            return  # we're at the start of the list
+            return beep()  # we're at the start of the list
         self.load_file(self.dirname, files[i-1])
         self.save_conf()
 
     def on_next_file(self, event):
         log.debug('next_file: %s', event)
-        files = [fname for fname in os.listdir(self.dirname) if fnmatch(fname, '*.??#') or fnmatch(fname.lower(), '*.zc') or (fnmatch(fname.lower(), '*.wav') and not fname.startswith('._'))]
-        i = files.index(self.filename)
+        files = self.listdir(self.dirname)
+        try:
+            i = files.index(self.filename)
+        except ValueError:
+            i = bisect(files, self.filename)  # deleted out from under us?
         if i == len(files) - 1:
-            return  # we're at the end of the list
+            return beep()  # we're at the end of the list
         self.load_file(self.dirname, files[i+1])
         self.save_conf()
 
     def on_prev_dir(self, event):
         log.debug('prev_dir: %s', event)
         parent, current = os.path.split(self.dirname)
-        siblings = [p for p in os.listdir(parent) if os.path.isdir(os.path.join(parent, p))]
-        i = siblings.index(current)
+        siblings = [p for p in sorted(os.listdir(parent)) if os.path.isdir(os.path.join(parent, p))]
+        try:
+            i = siblings.index(current)
+        except ValueError:
+            i = bisect(siblings, current)  # deleted out from under us?
         if i <= 0:
-            return  # we're at the start of the list
+            return beep()  # we're at the start of the list
         newdir = os.path.join(parent, siblings[i-1])
-        files = [fname for fname in os.listdir(newdir) if fnmatch(fname, '*.??#') or fnmatch(fname.lower(), '*.zc') or (fnmatch(fname.lower(), '*.wav') and not fname.startswith('._'))]
+        files = self.listdir(newdir)
         if not files:
-            return  # no anabat files in next dir
+            return beep()  # no anabat files in next dir
         self.load_file(newdir, files[0])
         self.save_conf()
 
     def on_next_dir(self, event):
         log.debug('next_dir: %s', event)
         parent, current = os.path.split(self.dirname)
-        siblings = [p for p in os.listdir(parent) if os.path.isdir(os.path.join(parent, p))]
-        i = siblings.index(current)
+        siblings = [p for p in sorted(os.listdir(parent)) if os.path.isdir(os.path.join(parent, p))]
+        try:
+            i = siblings.index(current)
+        except ValueError:
+            i = bisect(siblings, current)  # deleted out from under us?
         if i == len(siblings) - 1:
-            return  # we're at the end of the list
+            return beep()  # we're at the end of the list
         newdir = os.path.join(parent, siblings[i+1])
-        files = [fname for fname in os.listdir(newdir) if fnmatch(fname, '*.??#') or fnmatch(fname.lower(), '*.zc') or (fnmatch(fname.lower(), '*.wav') and not fname.startswith('._'))]
+        files = self.listdir(newdir)
         if not files:
-            return  # no anabat files in next dir
+            return beep()  # no anabat files in next dir
         self.load_file(newdir, files[0])
         self.save_conf()
 
@@ -448,7 +470,7 @@ class ZCViewMainFrame(wx.Frame):
         species = ', '.join(metadata.get('species', [])) or '?'
         min_ = np.amin(freqs > 8000) / 1000 if len(freqs) else 0  # TODO: magic 8k lower bound
         max_ = np.amax(freqs) / 1000 if len(freqs) else 0
-        info = 'HPF: %.1f kHz   .WAV Threshold: %.2f RMS   View: %s' % (self.hpfilter, self.wav_threshold, self._pretty_window_size())
+        info = 'HPF: %.1f kHz   Sensitivity: %.2f RMS   View: %s' % (self.hpfilter, self.wav_threshold, self._pretty_window_size())
         self.statusbar.SetStatusText(
             '%s     Dots: %5d     Fmin: %5.1f kHz     Fmax: %5.1f kHz     Species: %s       [%s]'
             % (timestamp, len(freqs), min_, max_, species, info)
