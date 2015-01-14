@@ -12,6 +12,7 @@ import os
 import os.path
 import json
 from fnmatch import fnmatch
+from bisect import bisect
 
 import wx
 
@@ -23,6 +24,7 @@ matplotlib.use('WXAgg')
 from matplotlib.figure import Figure
 import matplotlib.ticker
 import matplotlib.gridspec
+from matplotlib.cm import ScalarMappable
 
 from zcview import print_timing
 from zcview.anabat import extract_anabat
@@ -69,6 +71,8 @@ class ZCViewMainFrame(wx.Frame):
         self.wav_threshold = 1.0
         self.wav_divratio = 8
         self.hpfilter = 20.0
+        self.window_secs = None
+        self.window_start = 0.0
         self.read_conf()
 
         self.init_gui()
@@ -140,6 +144,7 @@ class ZCViewMainFrame(wx.Frame):
         prev_file_id, next_file_id, prev_dir_id, next_dir_id = wx.NewId(), wx.NewId(), wx.NewId(), wx.NewId()
         compressed_id, scale_id, cmap_id, cmap_back_id = wx.NewId(), wx.NewId(), wx.NewId(), wx.NewId()
         threshold_up_id, threshold_down_id, hpfilter_up_id, hpfilter_down_id = wx.NewId(), wx.NewId(), wx.NewId(), wx.NewId()
+        win_forward_id, win_back_id, win_zoom_in, win_zoom_out, win_zoom_off = wx.NewId(), wx.NewId(), wx.NewId(), wx.NewId(), wx.NewId()
         save_image_id = wx.NewId()
         self.Bind(wx.EVT_MENU, self.on_prev_file, id=prev_file_id)
         self.Bind(wx.EVT_MENU, self.on_next_file, id=next_file_id)
@@ -154,6 +159,11 @@ class ZCViewMainFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, self.on_hpfilter_up, id=hpfilter_up_id)
         self.Bind(wx.EVT_MENU, self.on_hpfilter_down, id=hpfilter_down_id)
         self.Bind(wx.EVT_MENU, self.on_save_image, id=save_image_id)
+        self.Bind(wx.EVT_MENU, self.on_win_forward, id=win_forward_id)
+        self.Bind(wx.EVT_MENU, self.on_win_back, id=win_back_id)
+        self.Bind(wx.EVT_MENU, self.on_zoom_in,  id=win_zoom_in)
+        self.Bind(wx.EVT_MENU, self.on_zoom_out, id=win_zoom_out)
+        self.Bind(wx.EVT_MENU, self.on_zoom_off, id=win_zoom_off)
         a_table = wx.AcceleratorTable([
 
             (wx.ACCEL_NORMAL, ord('['),  prev_file_id),
@@ -176,7 +186,15 @@ class ZCViewMainFrame(wx.Frame):
             (wx.ACCEL_SHIFT,  wx.WXK_UP, hpfilter_up_id),
             (wx.ACCEL_SHIFT,  wx.WXK_DOWN, hpfilter_down_id),
 
-            (wx.ACCEL_CMD,    ord('s'), save_image_id)
+            (wx.ACCEL_NORMAL, wx.WXK_RIGHT, win_forward_id),
+            (wx.ACCEL_NORMAL, wx.WXK_LEFT,  win_back_id),
+            (wx.ACCEL_SHIFT,  ord('='), win_zoom_in),   # +
+            (wx.ACCEL_NORMAL, ord('='), win_zoom_in),
+            (wx.ACCEL_SHIFT,  ord('-'), win_zoom_out),  # -
+            (wx.ACCEL_NORMAL, ord('-'), win_zoom_out),
+            (wx.ACCEL_NORMAL, ord('0'), win_zoom_off),
+
+            (wx.ACCEL_CMD,    ord('s'), save_image_id),
         ])
         self.SetAcceleratorTable(a_table)
 
@@ -288,6 +306,46 @@ class ZCViewMainFrame(wx.Frame):
         self.load_file(newdir, files[0])
         self.save_conf()
 
+    def on_zoom_in(self, event):
+        if self.window_secs is None:
+            self.window_secs = 2.0
+        else:
+            self.window_secs /= 2
+        self.reload_file()
+
+    def on_zoom_out(self, event):
+        if self.window_secs is None:
+            return
+        self.window_secs *= 2
+        self.reload_file()
+
+    def on_zoom_off(self, event):
+        self.window_secs = None
+        self.window_start = 0.0
+        self.reload_file()
+
+    def on_win_forward(self, event):
+        if self.window_secs is None:
+            return
+        window_start = self.window_start + (self.window_secs / 4)
+        if window_start >= self._times[-1]:
+            window_start = self._times[-1] - self.window_secs
+        if window_start < 0:
+            window_start = 0  # very short files?
+        log.debug('shifting window forward to %.1f sec', window_start)
+        self.window_start = window_start
+        self.reload_file()
+
+    def on_win_back(self, event):
+        if self.window_secs is None:
+            return
+        window_start = self.window_start - self.window_secs / 4
+        if window_start < 0:
+            window_start = 0
+        log.debug('shifting window backward to %.1f sec', window_start)
+        self.window_start = window_start
+        self.reload_file()
+
     def extract(self, path):
         """Extract (times, freqs, metadata) from supported filetypes"""
         ext = os.path.splitext(path)[1].lower()
@@ -298,8 +356,19 @@ class ZCViewMainFrame(wx.Frame):
         else:
             raise Exception('Unknown file type: %s', path)
 
+    def reload_file(self):
+        """Re-plot current file without reloading from disk"""
+        return self.plot(self._times, self._freqs, self._metadata)
+
     def load_file(self, dirname, filename):
+        """Called to either load a new file fresh, or load the current file when we've made
+        changes that necessitate re-parsing the original file itself."""
         log.debug('\n\nload_file:  %s  %s', dirname, filename)
+
+        if filename != self.filename:
+            # reset some file-specific state
+            self.window_start = 0.0
+
         path = os.path.join(dirname, filename)
         if not path:
             return
@@ -317,16 +386,31 @@ class ZCViewMainFrame(wx.Frame):
     def plot(self, times, freqs, metadata):
         title = title_from_path(metadata.get('path', ''))
         conf = dict(compressed=self.is_compressed, colormap=self.cmap, scale='linear' if self.is_linear_scale else 'log', filter_markers=(self.hpfilter,))
+
+        if self.window_secs is not None:
+            if times[-1] - self.window_start >= self.window_secs:
+                log.info('NORMAL')
+                window_from, window_to = bisect(times, self.window_start), bisect(times, self.window_start + self.window_secs)
+            elif self.window_secs >= times[-1]:
+                log.info('WINDOW TOO BIG')
+                window_from, window_to = 0, len(times)-1  # window is bigger than file
+            else:
+                log.info('END OF FILE')
+                window_from, window_to = bisect(times, times[-1] - self.window_secs), len(times)-1  # panned to the end
+            times, freqs = times[window_from:window_to], freqs[window_from:window_to]
+            log.debug('%.1f sec window:  times: %d  freqs: %d', self.window_secs, len(times), len(freqs))
+
         try:
             panel = ZeroCrossPlotPanel(self, times, freqs, name=title, config=conf)
             panel.Show()
 
-            timestamp = metadata.get('timestamp', None) or metadata.get('date', '')
+            timestamp = metadata.get('timestamp', None) or metadata.get('date', '????-??-??')
             if hasattr(timestamp, 'strftime'):
                 timestamp = timestamp.strftime('%Y-%m-%d %H:%M:%S')
-            min_, max_ = np.amin(freqs[freqs >= 100])/1000.0, np.amax(freqs)/1000.0
+            min_ = np.amin(freqs > 1000) / 1000 if len(freqs) else 0
+            max_ = np.amax(freqs) / 1000 if len(freqs) else 0
             self.statusbar.SetStatusText(
-                '%s     Dots: %5d     Fmin: %5.1fkHz     Fmax: %5.1fkHz     Species: %s'
+                '%s     Dots: %5d     Fmin: %5.1f kHz     Fmax: %5.1f kHz     Species: %s'
                 % (timestamp, len(freqs), min_, max_, ', '.join(metadata.get('species',[]))))
 
             if self.plotpanel:
@@ -335,10 +419,6 @@ class ZCViewMainFrame(wx.Frame):
 
         except Exception, e:
             log.exception('Failed plotting %s', metadata.get('filename', ''))
-
-    def reload_file(self):
-        """Re-plot without reloading file from disk"""
-        return self.plot(self._times, self._freqs, self._metadata)
 
     def on_compressed_toggle(self, event):
         log.debug('toggling compressed view (%s)', not self.is_compressed)
@@ -485,7 +565,7 @@ def slopes(x, y):
     slopes = np.diff(np.log2(y)) / np.diff(np.log2(x))
     slopes = np.append(slopes, slopes[-1])  # hack for final dot
     slopes = -1 * slopes  # Analook inverts slope so we do also
-    log.debug('Smax: %d OPS   Smin: %d OPS', np.amax(slopes), np.amin(slopes))
+    log.debug('Smax: %s OPS   Smin: %s OPS', np.amax(slopes), np.amin(slopes))
     slopes[slopes < -5000] = 0.0  # super-steep is probably noise or a new pulse
     slopes[slopes > 10000] = 0.0  # TODO: refine these magic boundary values!
     return slopes
@@ -560,7 +640,13 @@ class ZeroCrossPlotPanel(PlotPanel):
         # Colorbar plot
         cbar_plot = self.figure.add_subplot(gs[1]) #axes([0.85, 0, 0.05, 1.0])
         cbar_plot.set_title('Slope')
-        cbar = self.figure.colorbar(dot_scatter, cax=cbar_plot, ticks=[])
+        try:
+            cbar = self.figure.colorbar(dot_scatter, cax=cbar_plot, ticks=[])
+        except TypeError, e:
+            # colorbar() blows up on empty set
+            sm = ScalarMappable(cmap=self.config['colormap'])
+            sm.set_array(np.array([0, 1]))
+            cbar = self.figure.colorbar(sm, cax=cbar_plot, ticks=[])
         cbar.ax.set_yticklabels([])
 
         # Hist plot
