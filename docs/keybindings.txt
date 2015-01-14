@@ -18,14 +18,14 @@ View
 SPACE .... Toggle compressed view / realtime view
 l ........ Toggle linear/log scale
 
-+ ........ Zoom in to standard zooms (2.0s, 1.0s, 0.5s, 0.25s...)
++ ........ Zoom in to standard zooms (2.0s, 1.0s, 1/2s, 1/4s ...)
 - ........ Zoom out standard zoom
 0 ........ Return to viewing entire file
 
 p ........ Switch color palette
-SHIFT+p .. Back color palette
+SHIFT+p .. Backward color palette
 
-CMD+s .... Save .PNG plot image
+CMD+s .... Save a .PNG plot image
 
 
 WAV Conversion

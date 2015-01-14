@@ -40,9 +40,8 @@ CONF_FNAME = os.path.expanduser('~/.myotisoft/zcview.ini')
 CMAP_SEQ  = ['Blues', 'BuGn', 'BuPu', 'GnBu', 'Greens', 'Greys', 'Oranges', 'OrRd', 'PuBu', 'PuBuGn', 'PuRd', 'Purples', 'RdPu', 'Reds', 'YlGn', 'YlGnBu', 'YlOrBr', 'YlOrRd']
 CMAP_SEQ2 = ['afmhot', 'autumn', 'bone', 'cool', 'copper', 'gist_heat', 'gray', 'hot', 'pink', 'spring', 'summer', 'winter']
 CMAP_DIV  = ['BrBG', 'bwr', 'coolwarm', 'PiYG', 'PRGn', 'PuOr', 'RdBu', 'RdGy', 'RdYlBu', 'RdYlGn', 'Spectral', 'seismic']
-CMAP_QUAL = ['Accent', 'Dark2', 'Paired', 'Pastel1', 'Pastel2', 'Set1', 'Set2', 'Set3']
 CMAP_MISC = ['gist_earth', 'terrain', 'ocean', 'gist_stern', 'brg', 'CMRmap', 'cubehelix', 'gnuplot', 'gnuplot2', 'gist_ncar', 'nipy_spectral', 'jet', 'rainbow', 'gist_rainbow', 'hsv', 'flag', 'prism']
-CMAPS = CMAP_SEQ + CMAP_SEQ2 + CMAP_DIV + CMAP_QUAL + CMAP_MISC
+CMAPS = CMAP_SEQ + CMAP_SEQ2 + CMAP_DIV + CMAP_MISC
 
 
 def title_from_path(path):
@@ -59,7 +58,7 @@ def title_from_path(path):
 
 class ZCViewMainFrame(wx.Frame):
 
-    def __init__(self, parent, title='Myotisoft ZCView'):
+    def __init__(self, parent, title='Myotisoft ZCView 0.1a'):
         wx.Frame.__init__(self, parent, title=title, size=(640,480))
 
         # Application State
@@ -68,7 +67,7 @@ class ZCViewMainFrame(wx.Frame):
         self.is_compressed = True
         self.is_linear_scale = True
         self.cmap = 'jet'
-        self.wav_threshold = 1.0
+        self.wav_threshold = 1.25
         self.wav_divratio = 8
         self.hpfilter = 20.0
         self.window_secs = None
@@ -327,7 +326,7 @@ class ZCViewMainFrame(wx.Frame):
     def on_win_forward(self, event):
         if self.window_secs is None:
             return
-        window_start = self.window_start + (self.window_secs / 4)
+        window_start = self.window_start + (self.window_secs / 5)
         if window_start >= self._times[-1]:
             window_start = self._times[-1] - self.window_secs
         if window_start < 0:
@@ -339,7 +338,7 @@ class ZCViewMainFrame(wx.Frame):
     def on_win_back(self, event):
         if self.window_secs is None:
             return
-        window_start = self.window_start - self.window_secs / 4
+        window_start = self.window_start - self.window_secs / 5
         if window_start < 0:
             window_start = 0
         log.debug('shifting window backward to %.1f sec', window_start)
@@ -373,45 +372,59 @@ class ZCViewMainFrame(wx.Frame):
         if not path:
             return
 
-        times, freqs, metadata = self.extract(path)
+        #beachball = wx.BusyCursor()
+        wx.BeginBusyCursor()
 
-        metadata['path'] = path
-        metadata['filename'] = filename
-        log.debug('    %s:  times: %d  freqs: %d', filename, len(times), len(freqs))
+        try:
+            times, freqs, metadata = self.extract(path)
 
-        self.plot(times, freqs, metadata)
+            metadata['path'] = path
+            metadata['filename'] = filename
+            log.debug('    %s:  times: %d  freqs: %d', filename, len(times), len(freqs))
 
-        self.dirname, self.filename, self._times, self._freqs, self._metadata = dirname, filename, times, freqs, metadata  # only set on success
+            self.plot(times, freqs, metadata)
+
+            self.dirname, self.filename, self._times, self._freqs, self._metadata = dirname, filename, times, freqs, metadata  # only set on success
+        except Exception, e:
+            log.exception('Barfed loading file: %s', path)
+
+        #del beachball
+        wx.EndBusyCursor()
+
+    def windowed_view(self, times, freqs):
+        if times[-1] - self.window_start >= self.window_secs:
+            #log.info('NORMAL')
+            window_from, window_to = bisect(times, self.window_start), bisect(times, self.window_start + self.window_secs)
+        elif self.window_secs >= times[-1]:
+            #log.info('WINDOW TOO BIG')
+            window_from, window_to = 0, len(times)-1  # window is bigger than file
+        else:
+            #log.info('END OF FILE')
+            window_from, window_to = bisect(times, times[-1] - self.window_secs), len(times)-1  # panned to the end
+
+        times, freqs = times[window_from:window_to], freqs[window_from:window_to]
+
+        # because times is sparse, we need to fill in edge cases (unfortunately np.insert, np.append copy rather than view)
+        if len(times) == 0 or times[0] > self.window_start:
+            times, freqs = np.insert(times, 0, self.window_start), np.insert(freqs, 0, self.window_start)
+        if times[-1] < self.window_start + self.window_secs:
+            times, freqs = np.append(times, self.window_start + self.window_secs), np.append(freqs, 0)  # this is wrong for END OF FILE case
+
+        log.debug('%.1f sec window:  times: %d  freqs: %d', self.window_secs, len(times), len(freqs))
+        return times, freqs
 
     def plot(self, times, freqs, metadata):
         title = title_from_path(metadata.get('path', ''))
         conf = dict(compressed=self.is_compressed, colormap=self.cmap, scale='linear' if self.is_linear_scale else 'log', filter_markers=(self.hpfilter,))
 
         if self.window_secs is not None:
-            if times[-1] - self.window_start >= self.window_secs:
-                log.info('NORMAL')
-                window_from, window_to = bisect(times, self.window_start), bisect(times, self.window_start + self.window_secs)
-            elif self.window_secs >= times[-1]:
-                log.info('WINDOW TOO BIG')
-                window_from, window_to = 0, len(times)-1  # window is bigger than file
-            else:
-                log.info('END OF FILE')
-                window_from, window_to = bisect(times, times[-1] - self.window_secs), len(times)-1  # panned to the end
-            times, freqs = times[window_from:window_to], freqs[window_from:window_to]
-            log.debug('%.1f sec window:  times: %d  freqs: %d', self.window_secs, len(times), len(freqs))
+            times, freqs = self.windowed_view(times, freqs)
 
         try:
             panel = ZeroCrossPlotPanel(self, times, freqs, name=title, config=conf)
             panel.Show()
 
-            timestamp = metadata.get('timestamp', None) or metadata.get('date', '????-??-??')
-            if hasattr(timestamp, 'strftime'):
-                timestamp = timestamp.strftime('%Y-%m-%d %H:%M:%S')
-            min_ = np.amin(freqs > 1000) / 1000 if len(freqs) else 0
-            max_ = np.amax(freqs) / 1000 if len(freqs) else 0
-            self.statusbar.SetStatusText(
-                '%s     Dots: %5d     Fmin: %5.1f kHz     Fmax: %5.1f kHz     Species: %s'
-                % (timestamp, len(freqs), min_, max_, ', '.join(metadata.get('species',[]))))
+            self.update_statusbar(times, freqs, metadata)
 
             if self.plotpanel:
                 self.plotpanel.Destroy()  # out with the old, in with the new
@@ -419,6 +432,27 @@ class ZCViewMainFrame(wx.Frame):
 
         except Exception, e:
             log.exception('Failed plotting %s', metadata.get('filename', ''))
+
+    def _pretty_window_size(self):
+        if self.window_secs is None:
+            return 'whole file'
+        elif self.window_secs >= 1.0:
+            return str(self.window_secs) + ' secs'
+        else:
+            return '1/%d sec' % int(round(1 / self.window_secs))
+
+    def update_statusbar(self, times, freqs, metadata):
+        timestamp = metadata.get('timestamp', None) or metadata.get('date', '????-??-??')
+        if hasattr(timestamp, 'strftime'):
+            timestamp = timestamp.strftime('%Y-%m-%d %H:%M:%S')
+        species = ', '.join(metadata.get('species', [])) or '?'
+        min_ = np.amin(freqs > 8000) / 1000 if len(freqs) else 0  # TODO: magic 8k lower bound
+        max_ = np.amax(freqs) / 1000 if len(freqs) else 0
+        info = 'HPF: %.1f kHz   .WAV Threshold: %.2f RMS   View: %s' % (self.hpfilter, self.wav_threshold, self._pretty_window_size())
+        self.statusbar.SetStatusText(
+            '%s     Dots: %5d     Fmin: %5.1f kHz     Fmax: %5.1f kHz     Species: %s       [%s]'
+            % (timestamp, len(freqs), min_, max_, species, info)
+        )
 
     def on_compressed_toggle(self, event):
         log.debug('toggling compressed view (%s)', not self.is_compressed)
@@ -451,15 +485,15 @@ class ZCViewMainFrame(wx.Frame):
         self.save_conf()
 
     def on_threshold_up(self, event):
-        self.wav_threshold += 0.2
+        self.wav_threshold += 0.25
         log.debug('increasing threshold to %.1f x RMS', self.wav_threshold)
         self.load_file(self.dirname, self.filename)
         self.save_conf()
 
     def on_threshold_down(self, event):
-        if self.wav_threshold < 0.2:
+        if self.wav_threshold < 0.25:
             return
-        self.wav_threshold -= 0.2
+        self.wav_threshold -= 0.25
         log.debug('decreasing threshold to %.1f x RMS', self.wav_threshold)
         self.load_file(self.dirname, self.filename)
         self.save_conf()
