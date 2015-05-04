@@ -70,14 +70,19 @@ class ZCViewMainFrame(wx.Frame):
         # Application State
         self.dirname = ''
         self.filename = ''
+
         self.is_compressed = True
         self.is_linear_scale = True
         self.cmap = 'jet'
+        self.harmonics = {'0.5': False, '1': True, '2': False, '3': False}
+
         self.wav_threshold = 1.25
-        self.wav_divratio = 8
+        self.wav_divratio = 16
         self.hpfilter = 20.0
+
         self.window_secs = None
         self.window_start = 0.0
+
         self.read_conf()
 
         self.init_gui()
@@ -91,48 +96,9 @@ class ZCViewMainFrame(wx.Frame):
     def init_gui(self):
         self.plotpanel = None
 
-        # Menu Bar
-        menu_bar = wx.MenuBar()
+        self.init_menu()
 
-        file_menu = wx.Menu()
-        open_item = file_menu.Append(wx.ID_OPEN, '&Open', ' Open a zero-cross file')
-        self.Bind(wx.EVT_MENU, self.on_open, open_item)
-        about_item = file_menu.Append(wx.ID_ABOUT, '&About', ' Information about this program')
-        self.Bind(wx.EVT_MENU, self.on_about, about_item)
-        file_menu.AppendSeparator()
-        exit_item = file_menu.Append(wx.ID_EXIT, 'E&xit', ' Terminate this program')
-        self.Bind(wx.EVT_MENU, self.on_exit, exit_item)
-        menu_bar.Append(file_menu, '&File')
-        self.SetMenuBar(menu_bar)
-
-        # Nav Toolbar
-        tool_bar = self.CreateToolBar( wx.TB_TEXT)
-        open_item = tool_bar.AddLabelTool(wx.ID_ANY, 'Open',       wx.Bitmap('resources/icons/file-8x.png'), shortHelp='Open')
-        self.Bind(wx.EVT_TOOL, self.on_open, open_item)
-
-        tool_bar.AddSeparator()
-        prev_dir  = tool_bar.AddLabelTool(wx.ID_ANY, 'Prev Folder', wx.Bitmap('resources/icons/chevron-left-8x.png'),
-                                          shortHelp='Prev folder', longHelp='Open the previous folder (or use the `{` key)')
-        self.Bind(wx.EVT_TOOL, self.on_prev_dir, prev_dir)
-        prev_file = tool_bar.AddLabelTool(wx.ID_ANY, 'Prev File',   wx.Bitmap('resources/icons/caret-left-8x.png'),
-                                          shortHelp='Prev file', longHelp='Open the previous file in this folder (or use `[` key)')
-        self.Bind(wx.EVT_TOOL, self.on_prev_file, prev_file)
-        next_file = tool_bar.AddLabelTool(wx.ID_ANY, 'Next File',   wx.Bitmap('resources/icons/caret-right-8x.png'),
-                                          shortHelp='Next file', longHelp='Open the next file in this folder (or use the `]` key)')
-        self.Bind(wx.EVT_TOOL, self.on_next_file, next_file)
-        next_dir  = tool_bar.AddLabelTool(wx.ID_ANY, 'Next Folder', wx.Bitmap('resources/icons/chevron-right-8x.png'),
-                                          shortHelp='Next folder', longHelp='Open the next folder (or use the `}` key)')
-        self.Bind(wx.EVT_TOOL, self.on_next_dir, next_dir)
-
-        tool_bar.AddSeparator()
-        toggle_compressed = tool_bar.AddLabelTool(wx.ID_ANY, 'Compressed', wx.Bitmap('resources/icons/audio-spectrum-8x.png'),
-                                                  shortHelp='Toggle compressed', longHelp='Toggle compressed view on/off (or use the `c` key)')
-        self.Bind(wx.EVT_TOOL, self.on_compressed_toggle, toggle_compressed)
-
-        tool_bar.AddSeparator()
-
-        #self.SetToolBar(tool_bar)
-        tool_bar.Realize()
+        self.init_toolbar()
 
         # Main layout
         #self.main_grid = wx.FlexGridSizer(rows=2)
@@ -145,20 +111,103 @@ class ZCViewMainFrame(wx.Frame):
         # Status Bar
         self.statusbar = self.CreateStatusBar()
 
+        self.init_keybindings()
+
+    def init_menu(self):
+        # Menu Bar
+        menu_bar = wx.MenuBar()
+        file_menu = wx.Menu()
+        open_item = file_menu.Append(wx.ID_OPEN, '&Open', ' Open a zero-cross file')
+        self.Bind(wx.EVT_MENU, self.on_open, open_item)
+        about_item = file_menu.Append(wx.ID_ABOUT, '&About', ' Information about this program')
+        self.Bind(wx.EVT_MENU, self.on_about, about_item)
+        file_menu.AppendSeparator()
+        exit_item = file_menu.Append(wx.ID_EXIT, 'E&xit', ' Terminate this program')
+        self.Bind(wx.EVT_MENU, self.on_exit, exit_item)
+        menu_bar.Append(file_menu, '&File')
+
+        view_menu = wx.Menu()
+
+        view_menu.AppendSeparator()
+        log_item = view_menu.AppendRadioItem(wx.ID_ANY, 'Log Scale', ' Logarithmic frequency scale')
+        self.Bind(wx.EVT_MENU, self.on_scale_toggle, log_item)
+        linear_item = view_menu.Append(wx.ID_ANY, 'Linear Scale', ' Linear frequency scale')
+        self.Bind(wx.EVT_MENU, self.on_scale_toggle, linear_item)
+        log_item.Check(not self.is_linear_scale)
+        linear_item.Check(self.is_linear_scale)
+
+        view_menu.AppendSeparator()
+        h05_item = view_menu.AppendCheckItem(wx.ID_ANY, '1/2 Harmonic', ' One-half harmonic')
+        self.Bind(wx.EVT_MENU, self.on_harmonic_toggle_h05, h05_item)
+        h1_item =  view_menu.AppendCheckItem(wx.ID_ANY, 'Fundamental',  ' Fundamental frequency')
+        h2_item =  view_menu.AppendCheckItem(wx.ID_ANY, '2nd Harmonic', ' 2nd harmonic')
+        self.Bind(wx.EVT_MENU, self.on_harmonic_toggle_h2, h2_item)
+        h3_item =  view_menu.AppendCheckItem(wx.ID_ANY, '3nd Harmonic', ' 3rd harmonic')
+        self.Bind(wx.EVT_MENU, self.on_harmonic_toggle_h3, h3_item)
+        menu_bar.Append(view_menu, '&View')
+
+        convert_menu = wx.Menu()
+        menu_bar.Append(convert_menu, '&Conversion')
+
+        help_menu = wx.Menu()
+        menu_bar.Append(help_menu, '&Help')
+
+        self.SetMenuBar(menu_bar)
+
+    def init_toolbar(self):
+        # Nav Toolbar
+        tool_bar = self.CreateToolBar(wx.TB_TEXT)
+        open_item = tool_bar.AddLabelTool(wx.ID_ANY, 'Open',
+                                          wx.Bitmap('resources/icons/file-8x.png'),
+                                          shortHelp='Open')
+        self.Bind(wx.EVT_TOOL, self.on_open, open_item)
+        tool_bar.AddSeparator()
+        prev_dir = tool_bar.AddLabelTool(wx.ID_ANY, 'Prev Folder',
+                                         wx.Bitmap('resources/icons/chevron-left-8x.png'),
+                                         shortHelp='Prev folder',
+                                         longHelp='Open the previous folder (or use the `{` key)')
+        self.Bind(wx.EVT_TOOL, self.on_prev_dir, prev_dir)
+        prev_file = tool_bar.AddLabelTool(wx.ID_ANY, 'Prev File',
+                                          wx.Bitmap('resources/icons/caret-left-8x.png'),
+                                          shortHelp='Prev file',
+                                          longHelp='Open the previous file in this folder (or use `[` key)')
+        self.Bind(wx.EVT_TOOL, self.on_prev_file, prev_file)
+        next_file = tool_bar.AddLabelTool(wx.ID_ANY, 'Next File',
+                                          wx.Bitmap('resources/icons/caret-right-8x.png'),
+                                          shortHelp='Next file',
+                                          longHelp='Open the next file in this folder (or use the `]` key)')
+        self.Bind(wx.EVT_TOOL, self.on_next_file, next_file)
+        next_dir = tool_bar.AddLabelTool(wx.ID_ANY, 'Next Folder',
+                                         wx.Bitmap('resources/icons/chevron-right-8x.png'),
+                                         shortHelp='Next folder',
+                                         longHelp='Open the next folder (or use the `}` key)')
+        self.Bind(wx.EVT_TOOL, self.on_next_dir, next_dir)
+        tool_bar.AddSeparator()
+        toggle_compressed = tool_bar.AddLabelTool(wx.ID_ANY, 'Compressed', wx.Bitmap(
+            'resources/icons/audio-spectrum-8x.png'),
+                                                  shortHelp='Toggle compressed',
+                                                  longHelp='Toggle compressed view on/off (or use the `c` key)')
+        self.Bind(wx.EVT_TOOL, self.on_compressed_toggle, toggle_compressed)
+        tool_bar.AddSeparator()
+        # self.SetToolBar(tool_bar)
+        tool_bar.Realize()
+
+    def init_keybindings(self):
         # Key Bindings
         prev_file_id, next_file_id, prev_dir_id, next_dir_id = wx.NewId(), wx.NewId(), wx.NewId(), wx.NewId()
         compressed_id, scale_id, cmap_id, cmap_back_id = wx.NewId(), wx.NewId(), wx.NewId(), wx.NewId()
         threshold_up_id, threshold_down_id, hpfilter_up_id, hpfilter_down_id = wx.NewId(), wx.NewId(), wx.NewId(), wx.NewId()
         win_forward_id, win_back_id, win_zoom_in, win_zoom_out, win_zoom_off = wx.NewId(), wx.NewId(), wx.NewId(), wx.NewId(), wx.NewId()
         save_image_id = wx.NewId()
+
         self.Bind(wx.EVT_MENU, self.on_prev_file, id=prev_file_id)
         self.Bind(wx.EVT_MENU, self.on_next_file, id=next_file_id)
-        self.Bind(wx.EVT_MENU, self.on_prev_dir,  id=prev_dir_id)
-        self.Bind(wx.EVT_MENU, self.on_next_dir,  id=next_dir_id)
+        self.Bind(wx.EVT_MENU, self.on_prev_dir, id=prev_dir_id)
+        self.Bind(wx.EVT_MENU, self.on_next_dir, id=next_dir_id)
         self.Bind(wx.EVT_MENU, self.on_compressed_toggle, id=compressed_id)
         self.Bind(wx.EVT_MENU, self.on_scale_toggle, id=scale_id)
         self.Bind(wx.EVT_MENU, self.on_cmap_switch, id=cmap_id)
-        self.Bind(wx.EVT_MENU, self.on_cmap_back,   id=cmap_back_id)
+        self.Bind(wx.EVT_MENU, self.on_cmap_back, id=cmap_back_id)
         self.Bind(wx.EVT_MENU, self.on_threshold_up, id=threshold_up_id)
         self.Bind(wx.EVT_MENU, self.on_threshold_down, id=threshold_down_id)
         self.Bind(wx.EVT_MENU, self.on_hpfilter_up, id=hpfilter_up_id)
@@ -166,18 +215,18 @@ class ZCViewMainFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, self.on_save_image, id=save_image_id)
         self.Bind(wx.EVT_MENU, self.on_win_forward, id=win_forward_id)
         self.Bind(wx.EVT_MENU, self.on_win_back, id=win_back_id)
-        self.Bind(wx.EVT_MENU, self.on_zoom_in,  id=win_zoom_in)
+        self.Bind(wx.EVT_MENU, self.on_zoom_in, id=win_zoom_in)
         self.Bind(wx.EVT_MENU, self.on_zoom_out, id=win_zoom_out)
         self.Bind(wx.EVT_MENU, self.on_zoom_off, id=win_zoom_off)
-        a_table = wx.AcceleratorTable([
 
+        a_table = wx.AcceleratorTable([
             (wx.ACCEL_NORMAL, ord('['),  prev_file_id),
             (wx.ACCEL_NORMAL, wx.WXK_F3, prev_file_id),
             (wx.ACCEL_NORMAL, ord(']'),  next_file_id),
             (wx.ACCEL_NORMAL, wx.WXK_F4, next_file_id),
 
-            (wx.ACCEL_SHIFT,  ord('['), prev_dir_id),  # {
-            (wx.ACCEL_SHIFT,  ord(']'), next_dir_id),  # }
+            (wx.ACCEL_SHIFT, ord('['), prev_dir_id),  # {
+            (wx.ACCEL_SHIFT, ord(']'), next_dir_id),  # }
 
             (wx.ACCEL_NORMAL, wx.WXK_SPACE, compressed_id),
             (wx.ACCEL_NORMAL, ord('l'), scale_id),
@@ -185,11 +234,11 @@ class ZCViewMainFrame(wx.Frame):
             (wx.ACCEL_NORMAL, ord('p'), cmap_id),
             (wx.ACCEL_SHIFT,  ord('p'), cmap_back_id),
 
-            (wx.ACCEL_NORMAL, wx.WXK_UP, threshold_up_id),
+            (wx.ACCEL_NORMAL, wx.WXK_UP,   threshold_up_id),
             (wx.ACCEL_NORMAL, wx.WXK_DOWN, threshold_down_id),
 
-            (wx.ACCEL_SHIFT,  wx.WXK_UP, hpfilter_up_id),
-            (wx.ACCEL_SHIFT,  wx.WXK_DOWN, hpfilter_down_id),
+            (wx.ACCEL_SHIFT, wx.WXK_UP,   hpfilter_up_id),
+            (wx.ACCEL_SHIFT, wx.WXK_DOWN, hpfilter_down_id),
 
             (wx.ACCEL_NORMAL, wx.WXK_RIGHT, win_forward_id),
             (wx.ACCEL_NORMAL, wx.WXK_LEFT,  win_back_id),
@@ -199,7 +248,7 @@ class ZCViewMainFrame(wx.Frame):
             (wx.ACCEL_NORMAL, ord('-'), win_zoom_out),
             (wx.ACCEL_NORMAL, ord('0'), win_zoom_off),
 
-            (wx.ACCEL_CMD,    ord('s'), save_image_id),
+            (wx.ACCEL_CMD, ord('s'), save_image_id),
         ])
         self.SetAcceleratorTable(a_table)
 
@@ -248,6 +297,7 @@ class ZCViewMainFrame(wx.Frame):
             'compressed': self.is_compressed,
             'linear':     self.is_linear_scale,
             'colormap':   self.cmap,
+            'harmonics':  self.harmonics,
         }
         with open(CONF_FNAME, 'w') as outf:
             logging.debug('Writing conf file: %s', CONF_FNAME)
@@ -264,6 +314,7 @@ class ZCViewMainFrame(wx.Frame):
             self.is_compressed = conf.get('compressed', True)
             self.is_linear_scale = conf.get('linear', True)
             self.cmap = conf.get('colormap', 'jet')
+            harmonics = conf.get('harmonics', {'0.5': False, '1': True, '2': False, '3': False})
 
     def listdir(self, dirname):
         """Produce a list of supported filenames in the specified directory"""
@@ -437,7 +488,7 @@ class ZCViewMainFrame(wx.Frame):
 
     def plot(self, times, freqs, metadata):
         title = title_from_path(metadata.get('path', ''))
-        conf = dict(compressed=self.is_compressed, colormap=self.cmap, scale='linear' if self.is_linear_scale else 'log', filter_markers=(self.hpfilter,))
+        conf = dict(compressed=self.is_compressed, colormap=self.cmap, scale='linear' if self.is_linear_scale else 'log', filter_markers=(self.hpfilter,), harmonics=self.harmonics)
 
         if self.window_secs is not None:
             times, freqs = self.windowed_view(times, freqs)
@@ -487,6 +538,20 @@ class ZCViewMainFrame(wx.Frame):
     def on_scale_toggle(self, event):
         log.debug('toggling Y scale (%s)', 'linear' if self.is_linear_scale else 'log')
         self.is_linear_scale = not self.is_linear_scale
+        self.reload_file()
+        self.save_conf()
+
+    def on_harmonic_toggle_h05(self, event):
+        self._on_harmonic_toggle(event, '0.5')
+
+    def on_harmonic_toggle_h2(self, event):
+        self._on_harmonic_toggle(event, '2')
+
+    def on_harmonic_toggle_h3(self, event):
+        self._on_harmonic_toggle(event, '3')
+
+    def _on_harmonic_toggle(self, event, harmonic):
+        self.harmonics[harmonic] = not self.harmonics.get(harmonic, False)
         self.reload_file()
         self.save_conf()
 
@@ -635,7 +700,8 @@ class ZeroCrossPlotPanel(PlotPanel):
         'markers': (25, 40),       # reference lines kHz
         'filter_markers': (20.0,), # reference lines kHz
         'compressed': False,       # compressed view (True) or realtime (False)
-        'colormap': 'jet'          # named color map
+        'colormap': 'jet',         # named color map
+        'harmonics': {'0.5': False, '1': True, '2': False, '3': False},
     }
 
     def __init__(self, parent, times, freqs, config=None, **kwargs):
@@ -670,6 +736,12 @@ class ZeroCrossPlotPanel(PlotPanel):
             self.dot_plot.set_xlabel('Time (sec)')
         else:
             x = range(len(self.freqs))
+            if self.config['harmonics']['0.5']:
+                dot_scatter_h05 = self.dot_plot.scatter(x, self.freqs/2, c=self.slopes, alpha=0.2, **plot_kwargs)
+            if self.config['harmonics']['2']:
+                dot_scatter_h2 = self.dot_plot.scatter(x, self.freqs*2, c=self.slopes, alpha=0.2, **plot_kwargs)
+            if self.config['harmonics']['3']:
+                dot_scatter_h3 = self.dot_plot.scatter(x, self.freqs*3, c=self.slopes, alpha=0.2, **plot_kwargs)
             dot_scatter = self.dot_plot.scatter(x, self.freqs, c=self.slopes, **plot_kwargs)
             self.dot_plot.set_xlim(0, len(x))
             self.dot_plot.set_xlabel('Dot Count')
