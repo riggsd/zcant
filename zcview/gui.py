@@ -25,10 +25,11 @@ matplotlib.use('WXAgg')
 from matplotlib.figure import Figure
 import matplotlib.ticker
 import matplotlib.gridspec
-from matplotlib.cm import ScalarMappable
+from matplotlib.cm import get_cmap, ScalarMappable
+from matplotlib.colors import Normalize
 
 from zcview import print_timing
-from zcview.anabat import extract_anabat
+from zcview.anabat import extract_anabat, AnabatFileWriter
 from zcview.conversion import wav2zc
 
 import logging
@@ -194,11 +195,12 @@ class ZCViewMainFrame(wx.Frame):
 
     def init_keybindings(self):
         # Key Bindings
+        # TODO: move all these IDs to global scope and reuse them in menubar
         prev_file_id, next_file_id, prev_dir_id, next_dir_id = wx.NewId(), wx.NewId(), wx.NewId(), wx.NewId()
         compressed_id, scale_id, cmap_id, cmap_back_id = wx.NewId(), wx.NewId(), wx.NewId(), wx.NewId()
         threshold_up_id, threshold_down_id, hpfilter_up_id, hpfilter_down_id = wx.NewId(), wx.NewId(), wx.NewId(), wx.NewId()
         win_forward_id, win_back_id, win_zoom_in, win_zoom_out, win_zoom_off = wx.NewId(), wx.NewId(), wx.NewId(), wx.NewId(), wx.NewId()
-        save_image_id = wx.NewId()
+        save_file_id, save_image_id = wx.NewId(), wx.NewId()
 
         self.Bind(wx.EVT_MENU, self.on_prev_file, id=prev_file_id)
         self.Bind(wx.EVT_MENU, self.on_next_file, id=next_file_id)
@@ -212,6 +214,7 @@ class ZCViewMainFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, self.on_threshold_down, id=threshold_down_id)
         self.Bind(wx.EVT_MENU, self.on_hpfilter_up, id=hpfilter_up_id)
         self.Bind(wx.EVT_MENU, self.on_hpfilter_down, id=hpfilter_down_id)
+        self.Bind(wx.EVT_MENU, self.on_save_file, id=save_file_id)
         self.Bind(wx.EVT_MENU, self.on_save_image, id=save_image_id)
         self.Bind(wx.EVT_MENU, self.on_win_forward, id=win_forward_id)
         self.Bind(wx.EVT_MENU, self.on_win_back, id=win_back_id)
@@ -231,8 +234,8 @@ class ZCViewMainFrame(wx.Frame):
             (wx.ACCEL_NORMAL, wx.WXK_SPACE, compressed_id),
             (wx.ACCEL_NORMAL, ord('l'), scale_id),
 
-            (wx.ACCEL_NORMAL, ord('p'), cmap_id),
-            (wx.ACCEL_SHIFT,  ord('p'), cmap_back_id),
+            (wx.ACCEL_NORMAL, ord('c'), cmap_id),
+            (wx.ACCEL_SHIFT,  ord('c'), cmap_back_id),
 
             (wx.ACCEL_NORMAL, wx.WXK_UP,   threshold_up_id),
             (wx.ACCEL_NORMAL, wx.WXK_DOWN, threshold_down_id),
@@ -248,7 +251,8 @@ class ZCViewMainFrame(wx.Frame):
             (wx.ACCEL_NORMAL, ord('-'), win_zoom_out),
             (wx.ACCEL_NORMAL, ord('0'), win_zoom_off),
 
-            (wx.ACCEL_CMD, ord('s'), save_image_id),
+            (wx.ACCEL_CMD, ord('p'), save_image_id),
+            (wx.ACCEL_CMD, ord('s'), save_file_id),
         ])
         self.SetAcceleratorTable(a_table)
 
@@ -261,6 +265,26 @@ class ZCViewMainFrame(wx.Frame):
             self.plotpanel.figure.savefig(imagename)
         except Exception, e:
             log.exception('Failed saving image: %s', imagename)
+
+    @print_timing
+    def on_save_file(self, event):
+        # For now, we will only save a converted .WAV as Anabat file
+        if not self.filename.lower().endswith('.wav'):
+            return
+        outdir = os.path.join(self.dirname, 'ZCANT_Converted')
+        if not os.path.exists(outdir):
+            os.makedirs(outdir)
+        outfname = self.filename[:-4]+'.00#'
+        outpath = os.path.join(outdir, outfname)
+        timestamp = None  # FIXME
+        log.debug('Saving %s ...', outpath)
+        with AnabatFileWriter(outpath) as out:
+            out.write_header(timestamp, self.wav_divratio, species='Mylu', note='line 1', note1='line 2')
+            time_indexes_s = self._times
+            time_indexes_us = self._times * 1000000
+            intervals_us = np.diff(time_indexes_us)
+            intervals_us = intervals_us.astype(int)
+            out.write_intervals(intervals_us)
 
     def on_about(self, event):
         log.debug('about: %s', event)
@@ -772,7 +796,7 @@ class ZeroCrossPlotPanel(PlotPanel):
             cbar = self.figure.colorbar(dot_scatter, cax=cbar_plot, ticks=[])
         except TypeError, e:
             # colorbar() blows up on empty set
-            sm = ScalarMappable(cmap=self.config['colormap'])
+            sm = ScalarMappable(cmap=self.config['colormap'])  # TODO: this should probably share colormap code with histogram
             sm.set_array(np.array([0, 1]))
             cbar = self.figure.colorbar(sm, cax=cbar_plot, ticks=[])
         cbar.ax.set_yticklabels([])
@@ -782,11 +806,22 @@ class ZeroCrossPlotPanel(PlotPanel):
         hist_plot = self.figure.add_subplot(gs[2]) #axes([0.91, 0, 0.09, 1.0], sharey=self.dot_plot)
         hist_plot.set_title('Freqs')
 
-        bins = int(round((maxy - miny) / 2.5))
-        hist_plot.hist(self.freqs, orientation='horizontal', bins=bins)
+        #bins = int(round((maxy - miny) / 2.5))  # TODO: this should probably just be fixed at some size, eg. 2.5khz
+        bin_min, bin_max = self.config['freqminmax']
+        bin_size = 2  # khz
+        bin_n = int((bin_max - bin_min) / bin_size)
+        n, bins, patches = hist_plot.hist(self.freqs, orientation='horizontal', range=self.config['freqminmax'], bins=bin_n)
         hist_plot.set_yscale(self.config['scale'])
         hist_plot.set_ylim(miny, maxy)
         hist_plot.get_yaxis().set_major_formatter(matplotlib.ticker.ScalarFormatter())
+
+        # color histogram bins
+        cmap = ScalarMappable(cmap=self.config['colormap'], norm=Normalize(vmin=0, vmax=600))  # TODO: magic slope upper limit
+        for bin_start, bin_end, patch in zip(bins[:-1], bins[1:], patches):
+            bin_slopes = self.slopes[(bin_start <= self.freqs) & (self.freqs < bin_end)]
+            avg_slope = np.median(bin_slopes) if bin_slopes.any() else 0
+            patch.set_facecolor(cmap.to_rgba(avg_slope))
+
         hist_plot.yaxis.set_ticks(ticks)
         hist_plot.yaxis.tick_right()
         hist_plot.grid(axis='y', which='both')

@@ -22,8 +22,8 @@ l ........ Toggle linear/log scale
 - ........ Zoom out standard zoom
 0 ........ Return to viewing entire file
 
-p ........ Switch color palette
-SHIFT+p .. Backward color palette
+c ........ Switch color palette
+SHIFT+c .. Backward color palette
 
 CMD+s .... Save a .PNG plot image
 
