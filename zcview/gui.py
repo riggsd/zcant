@@ -134,20 +134,31 @@ class ZCViewMainFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, self.on_scale_toggle, log_item)
         linear_item = view_menu.Append(wx.ID_ANY, 'Linear Scale', ' Linear frequency scale')
         self.Bind(wx.EVT_MENU, self.on_scale_toggle, linear_item)
-        log_item.Check(not self.is_linear_scale)
-        linear_item.Check(self.is_linear_scale)
+        # FIXME: select the current scale on start
+#        log_item.Check(not self.is_linear_scale)
+#        linear_item.Check(self.is_linear_scale)
 
         view_menu.AppendSeparator()
         h05_item = view_menu.AppendCheckItem(wx.ID_ANY, '1/2 Harmonic', ' One-half harmonic')
-        self.Bind(wx.EVT_MENU, self.on_harmonic_toggle_h05, h05_item)
+        self.Bind(wx.EVT_MENU, lambda e: self.on_harmonic_toggle('0.5'), h05_item)
         h1_item =  view_menu.AppendCheckItem(wx.ID_ANY, 'Fundamental',  ' Fundamental frequency')
         h2_item =  view_menu.AppendCheckItem(wx.ID_ANY, '2nd Harmonic', ' 2nd harmonic')
-        self.Bind(wx.EVT_MENU, self.on_harmonic_toggle_h2, h2_item)
+        self.Bind(wx.EVT_MENU, lambda e: self.on_harmonic_toggle('2'), h2_item)
         h3_item =  view_menu.AppendCheckItem(wx.ID_ANY, '3nd Harmonic', ' 3rd harmonic')
-        self.Bind(wx.EVT_MENU, self.on_harmonic_toggle_h3, h3_item)
+        self.Bind(wx.EVT_MENU, lambda e: self.on_harmonic_toggle('3'), h3_item)
         menu_bar.Append(view_menu, '&View')
 
         convert_menu = wx.Menu()
+        # FIXME: select the current divratio on start
+        convert_menu.AppendSeparator()
+        div4_item = convert_menu.AppendRadioItem(wx.ID_ANY, 'Div 4', ' 1/4 frequency division ratio')
+        self.Bind(wx.EVT_MENU, lambda e: self.on_divratio_select(4), div4_item)
+        div8_item = convert_menu.AppendRadioItem(wx.ID_ANY, 'Div 8', ' 1/8 frequency division ratio')
+        self.Bind(wx.EVT_MENU, lambda e: self.on_divratio_select(8), div8_item)
+        div16_item = convert_menu.AppendRadioItem(wx.ID_ANY, 'Div 16', ' 1/16 frequency division ratio')
+        self.Bind(wx.EVT_MENU, lambda e: self.on_divratio_select(16), div16_item)
+        div32_item = convert_menu.AppendRadioItem(wx.ID_ANY, 'Div 32', ' 1/32 frequency division ratio')
+        self.Bind(wx.EVT_MENU, lambda e: self.on_divratio_select(32), div32_item)
         menu_bar.Append(convert_menu, '&Conversion')
 
         help_menu = wx.Menu()
@@ -545,7 +556,8 @@ class ZCViewMainFrame(wx.Frame):
         species = ', '.join(metadata.get('species', [])) or '?'
         min_ = np.amin(freqs > 8000) / 1000 if len(freqs) else 0  # TODO: magic 8k lower bound
         max_ = np.amax(freqs) / 1000 if len(freqs) else 0
-        info = 'HPF: %.1f kHz   Sensitivity: %.2f RMS   View: %s' % (self.hpfilter, self.wav_threshold, self._pretty_window_size())
+        divratio = self.wav_divratio  # FIXME: if Anabat file, use the actual divratio (unless we're downsampling it)
+        info = 'HPF: %.1f kHz   Sensitivity: %.2f RMS   Div: %d   View: %s' % (self.hpfilter, self.wav_threshold, divratio, self._pretty_window_size())
         self.statusbar.SetStatusText(
             '%s     Dots: %5d     Fmin: %5.1f kHz     Fmax: %5.1f kHz     Species: %s       [%s]'
             % (timestamp, len(freqs), min_, max_, species, info)
@@ -565,18 +577,14 @@ class ZCViewMainFrame(wx.Frame):
         self.reload_file()
         self.save_conf()
 
-    def on_harmonic_toggle_h05(self, event):
-        self._on_harmonic_toggle(event, '0.5')
-
-    def on_harmonic_toggle_h2(self, event):
-        self._on_harmonic_toggle(event, '2')
-
-    def on_harmonic_toggle_h3(self, event):
-        self._on_harmonic_toggle(event, '3')
-
-    def _on_harmonic_toggle(self, event, harmonic):
+    def on_harmonic_toggle(self, harmonic):
         self.harmonics[harmonic] = not self.harmonics.get(harmonic, False)
         self.reload_file()
+        self.save_conf()
+
+    def on_divratio_select(self, divratio):
+        self.wav_divratio = divratio
+        self.load_file(self.dirname, self.filename)
         self.save_conf()
 
     def on_cmap_switch(self, event):
