@@ -7,12 +7,18 @@ Usage:
 
 from setuptools import setup
 
-APP = ['ZCView.py']
+from ZCView import __version__
+
+
+APP = 'ZCView.py'
+NAME = 'Myotisoft ZCView %s' % __version__
 DATA_FILES = [('', ['resources'])]
+ICON = 'docs/myotisoft_icon.icns'
+
 PY2APP_OPTIONS = {
-    'argv_emulation': True,
+    'argv_emulation': False,
     'optimize': 2,
-    'iconfile': '/Users/driggs/workspace/zcview/resources/icons/myotisoft_icon.icns',
+    'iconfile': ICON,
     'excludes': ['phonon', 'qt', 'PyQt4', 'PIL'],
     'dylib_excludes': ['PyQT', 'QtCore', 'QtDeclarative', 'QtDesigner', 'QtGui', 'QtHelp', 'QtMultimedia', 'QtNetwork', 'QtOpenGL', 'QtScript', 'QtScriptTools', 'QtSql', 'QtSvg', 'QtTest', 'QtWebKit', 'QtXml', 'QtXmlPatterns',
                        'PIL', 'phonon', '_codecs_cn.so', '_codecs_hk.so', '_codecs_iso2022.so', '_codecs_jp.so', '_codecs_kr.so', '_codecs_tw.so'],
@@ -20,7 +26,7 @@ PY2APP_OPTIONS = {
 }
 
 setup(
-    app=APP,
+    app=[APP],
     data_files=DATA_FILES,
     options={'py2app': PY2APP_OPTIONS},
     setup_requires=['py2app'],
