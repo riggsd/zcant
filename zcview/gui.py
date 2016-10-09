@@ -36,6 +36,9 @@ import logging
 log = logging.getLogger(__name__)
 
 
+np.seterr(all='warn')  # switch to 'raise' and NumPy will fail fast on calculation errors
+
+
 CONF_FNAME = os.path.expanduser('~/.myotisoft/zcview.ini')
 
 
@@ -74,6 +77,7 @@ class ZCViewMainFrame(wx.Frame):
 
         self.is_compressed = True
         self.is_linear_scale = True
+        self.use_smoothed_slopes = False
         self.cmap = 'jet'
         self.harmonics = {'0.5': False, '1': True, '2': False, '3': False}
 
@@ -117,6 +121,8 @@ class ZCViewMainFrame(wx.Frame):
     def init_menu(self):
         # Menu Bar
         menu_bar = wx.MenuBar()
+
+        # -- File Menu
         file_menu = wx.Menu()
         open_item = file_menu.Append(wx.ID_OPEN, '&Open', ' Open a zero-cross file')
         self.Bind(wx.EVT_MENU, self.on_open, open_item)
@@ -127,6 +133,7 @@ class ZCViewMainFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, self.on_exit, exit_item)
         menu_bar.Append(file_menu, '&File')
 
+        # -- View Menu
         view_menu = wx.Menu()
 
         view_menu.AppendSeparator()
@@ -139,6 +146,12 @@ class ZCViewMainFrame(wx.Frame):
 #        linear_item.Check(self.is_linear_scale)
 
         view_menu.AppendSeparator()
+        smooth_item = view_menu.AppendCheckItem(wx.ID_ANY, 'Smooth Slopes', 'Smooth out noisy slope values')
+        self.Bind(wx.EVT_MENU, self.on_smooth_slope_toggle, smooth_item)
+        smooth_item.Check(self.use_smoothed_slopes)
+        # FIXME: select the current smooth state on start
+
+        view_menu.AppendSeparator()
         h05_item = view_menu.AppendCheckItem(wx.ID_ANY, '1/2 Harmonic', ' One-half harmonic')
         self.Bind(wx.EVT_MENU, lambda e: self.on_harmonic_toggle('0.5'), h05_item)
         h1_item =  view_menu.AppendCheckItem(wx.ID_ANY, 'Fundamental',  ' Fundamental frequency')
@@ -148,6 +161,7 @@ class ZCViewMainFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, lambda e: self.on_harmonic_toggle('3'), h3_item)
         menu_bar.Append(view_menu, '&View')
 
+        # -- Conversion Menu
         convert_menu = wx.Menu()
         # FIXME: select the current divratio on start
         convert_menu.AppendSeparator()
@@ -333,6 +347,7 @@ class ZCViewMainFrame(wx.Frame):
             'linear':     self.is_linear_scale,
             'colormap':   self.cmap,
             'harmonics':  self.harmonics,
+            'smooth_slopes': self.use_smoothed_slopes,
         }
         with open(CONF_FNAME, 'w') as outf:
             logging.debug('Writing conf file: %s', CONF_FNAME)
@@ -349,6 +364,7 @@ class ZCViewMainFrame(wx.Frame):
             self.is_compressed = conf.get('compressed', True)
             self.is_linear_scale = conf.get('linear', True)
             self.cmap = conf.get('colormap', 'jet')
+            self.use_smoothed_slopes = conf.get('smooth_slopes', False)
             harmonics = conf.get('harmonics', {'0.5': False, '1': True, '2': False, '3': False})
 
     def listdir(self, dirname):
@@ -523,7 +539,8 @@ class ZCViewMainFrame(wx.Frame):
 
     def plot(self, times, freqs, metadata):
         title = title_from_path(metadata.get('path', ''))
-        conf = dict(compressed=self.is_compressed, colormap=self.cmap, scale='linear' if self.is_linear_scale else 'log', filter_markers=(self.hpfilter,), harmonics=self.harmonics)
+        conf = dict(compressed=self.is_compressed, colormap=self.cmap, scale='linear' if self.is_linear_scale else 'log',
+                    filter_markers=(self.hpfilter,), harmonics=self.harmonics, smooth_slopes=self.use_smoothed_slopes)
 
         if self.window_secs is not None:
             times, freqs = self.windowed_view(times, freqs)
@@ -576,6 +593,12 @@ class ZCViewMainFrame(wx.Frame):
         self.is_linear_scale = not self.is_linear_scale
         self.reload_file()
         self.save_conf()
+
+    def on_smooth_slope_toggle(self, event):
+        log.debug('smoothing...' if not self.use_smoothed_slopes else 'un-smoothing...')
+        self.use_smoothed_slopes = not self.use_smoothed_slopes
+        self.reload_file()
+        self.save_conf()  # FIXME: persist this state
 
     def on_harmonic_toggle(self, harmonic):
         self.harmonics[harmonic] = not self.harmonics.get(harmonic, False)
@@ -703,7 +726,28 @@ class PlotPanel(wx.Panel):
 
 
 @print_timing
-def slopes(x, y):
+def smooth(slopes):
+    """
+    Smooth slope values to account for the fact that zero-cross conversion may be noisy.
+    :param slopes: slope values
+    :return:
+    TODO: smooth individual pulses independently so we don't smooth across their boundaries
+    """
+    WINDOW_SIZE = 3  # hard-coded for now
+    # Rather than true convolution, we use a much faster cumulative sum solution
+    # http://stackoverflow.com/a/11352216
+    # http://stackoverflow.com/a/34387987
+    slopes = np.where(np.isnan(slopes), 0, slopes)  # replace NaN values
+    cumsum = np.cumsum(np.insert(slopes, 0, 0))
+    smoothed = (cumsum[WINDOW_SIZE:] - cumsum[:-WINDOW_SIZE]) / WINDOW_SIZE
+    # smoothed is missing element at start and end, so fake 'em
+    smoothed = np.insert(smoothed, 0, smoothed[0])
+    smoothed = np.insert(smoothed, -1, smoothed[-1])
+    return smoothed
+
+
+@print_timing
+def slopes(x, y, smooth_slopes=False):
     """
     Produce an array of slope values in octaves per second.
     We very, very crudely try to compensate for the jump between pulses, but don't deal well with noise.
@@ -721,6 +765,13 @@ def slopes(x, y):
     log.debug('Smax: %s OPS   Smin: %s OPS', np.amax(slopes), np.amin(slopes))
     slopes[slopes < -5000] = 0.0  # super-steep is probably noise or a new pulse
     slopes[slopes > 10000] = 0.0  # TODO: refine these magic boundary values!
+    if smooth_slopes:
+        log.info('BEFORE smoothing')
+        log.info('  ndim=%s shape=%s size=%s dtype=%s itemsize=%s NaN=%s', slopes.ndim, slopes.shape, slopes.size, slopes.dtype, slopes.itemsize, np.count_nonzero(np.isnan(slopes)))
+        slopes = smooth(slopes)
+        log.info('AFTER smoothing')
+        log.info('  ndim=%s shape=%s size=%s dtype=%s itemsize=%s NaN=%s', slopes.ndim, slopes.shape, slopes.size, slopes.dtype, slopes.itemsize, np.count_nonzero(np.isnan(slopes)))
+        # FIXME: rather than smoothing after the fact, can we simply calculate slope initially across every 2nd element?
     return slopes
 
 
@@ -732,6 +783,7 @@ class ZeroCrossPlotPanel(PlotPanel):
         'markers': (25, 40),       # reference lines kHz
         'filter_markers': (20.0,), # reference lines kHz
         'compressed': False,       # compressed view (True) or realtime (False)
+        'smooth_slopes': True,     # smooth out noisy slope values
         'colormap': 'jet',         # named color map
         'harmonics': {'0.5': False, '1': True, '2': False, '3': False},
     }
@@ -739,11 +791,13 @@ class ZeroCrossPlotPanel(PlotPanel):
     def __init__(self, parent, times, freqs, config=None, **kwargs):
         self.times = times if len(times) else np.array([0.0])
         self.freqs = freqs if len(freqs) else np.array([0.0])
-        self.slopes = slopes(self.times, self.freqs)
-        self.freqs = self.freqs / 1000  # convert Hz to KHz
+
         self.name = kwargs.get('name', '')
         if config:
             self.config.update(config)
+
+        self.slopes = slopes(self.times, self.freqs, smooth_slopes=self.config['smooth_slopes'])
+        self.freqs = self.freqs / 1000  # convert Hz to KHz
 
         PlotPanel.__init__(self, parent, **kwargs)
 
