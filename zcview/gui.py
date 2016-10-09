@@ -71,7 +71,7 @@ class ZCViewMainFrame(wx.Frame):
     def __init__(self, parent, title='Myotisoft ZCView 0.1a'):
         wx.Frame.__init__(self, parent, title=title, size=(640,480))
 
-        # Application State
+        # Application State - set initial defaults, then read state from conf file
         self.dirname = ''
         self.filename = ''
 
@@ -90,6 +90,7 @@ class ZCViewMainFrame(wx.Frame):
 
         self.read_conf()
 
+        # Initialize and load...
         self.init_gui()
 
         if self.dirname and self.filename:
@@ -139,17 +140,15 @@ class ZCViewMainFrame(wx.Frame):
         view_menu.AppendSeparator()
         log_item = view_menu.AppendRadioItem(wx.ID_ANY, 'Log Scale', ' Logarithmic frequency scale')
         self.Bind(wx.EVT_MENU, self.on_scale_toggle, log_item)
-        linear_item = view_menu.Append(wx.ID_ANY, 'Linear Scale', ' Linear frequency scale')
+        linear_item = view_menu.AppendRadioItem(wx.ID_ANY, 'Linear Scale', ' Linear frequency scale')
         self.Bind(wx.EVT_MENU, self.on_scale_toggle, linear_item)
-        # FIXME: select the current scale on start
-#        log_item.Check(not self.is_linear_scale)
-#        linear_item.Check(self.is_linear_scale)
+        log_item.Check(not self.is_linear_scale)
+        linear_item.Check(self.is_linear_scale)
 
         view_menu.AppendSeparator()
         smooth_item = view_menu.AppendCheckItem(wx.ID_ANY, 'Smooth Slopes', 'Smooth out noisy slope values')
         self.Bind(wx.EVT_MENU, self.on_smooth_slope_toggle, smooth_item)
         smooth_item.Check(self.use_smoothed_slopes)
-        # FIXME: select the current smooth state on start
 
         view_menu.AppendSeparator()
         h05_item = view_menu.AppendCheckItem(wx.ID_ANY, '1/2 Harmonic', ' One-half harmonic')
@@ -163,15 +162,18 @@ class ZCViewMainFrame(wx.Frame):
 
         # -- Conversion Menu
         convert_menu = wx.Menu()
-        # FIXME: select the current divratio on start
         convert_menu.AppendSeparator()
         div4_item = convert_menu.AppendRadioItem(wx.ID_ANY, 'Div 4', ' 1/4 frequency division ratio')
+        div4_item.Check(self.wav_divratio == 4)
         self.Bind(wx.EVT_MENU, lambda e: self.on_divratio_select(4), div4_item)
         div8_item = convert_menu.AppendRadioItem(wx.ID_ANY, 'Div 8', ' 1/8 frequency division ratio')
+        div8_item.Check(self.wav_divratio == 8)
         self.Bind(wx.EVT_MENU, lambda e: self.on_divratio_select(8), div8_item)
         div16_item = convert_menu.AppendRadioItem(wx.ID_ANY, 'Div 16', ' 1/16 frequency division ratio')
+        div16_item.Check(self.wav_divratio == 16)
         self.Bind(wx.EVT_MENU, lambda e: self.on_divratio_select(16), div16_item)
         div32_item = convert_menu.AppendRadioItem(wx.ID_ANY, 'Div 32', ' 1/32 frequency division ratio')
+        div32_item.Check(self.wav_divratio == 32)
         self.Bind(wx.EVT_MENU, lambda e: self.on_divratio_select(32), div32_item)
         menu_bar.Append(convert_menu, '&Conversion')
 
@@ -734,6 +736,14 @@ def smooth(slopes):
     TODO: smooth individual pulses independently so we don't smooth across their boundaries
     """
     WINDOW_SIZE = 3  # hard-coded for now
+    if slopes.size == 0:
+        return np.array([])
+    elif slopes.size == 1:
+        return np.array([0.0])
+    elif slopes.size == 2:
+        return np.array([0.0, 0.0])
+    elif slopes.size == 3:
+        return np.array([0.0, 0.0, 0.0])
     # Rather than true convolution, we use a much faster cumulative sum solution
     # http://stackoverflow.com/a/11352216
     # http://stackoverflow.com/a/34387987
