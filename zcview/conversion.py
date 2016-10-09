@@ -53,7 +53,7 @@ def load_wav(fname):
     if w_nchannels > 1:
         raise Exception('Only MONO .wav files are supported!')
     if w_sampwidth != 2:
-        raise Exception('Only 16-bit .wav files are supported (not %d)', w_sampwidth*8)
+        raise Exception('Only 16-bit .wav files are supported (not %d)' % (w_sampwidth*8))
 
     wav_bytes = wav.readframes(w_nframes)
     wav.close()
@@ -69,6 +69,7 @@ def load_wav(fname):
     if skip_bytes:
         wav_bytes = wav_bytes[skip_bytes:]
         w_nframes -= skip_bytes / w_sampwidth
+        log.debug('expected frames: %d  actual frames: %d', w_nframes, len(wav_bytes)/16)
 
     signal = np.array(struct.Struct('<%dh' % w_nframes).unpack_from(wav_bytes), dtype=np.dtype('int16'))
     # signal = signal / (2 ** (16-1))  # convert from 16-bit int to float range -1.0 - 1.0
@@ -86,7 +87,7 @@ def highpassfilter(signal, samplerate, cutoff_freq_hz, filter_order=6):
 def noise_gate(signal, threshold_factor):
     threshold = threshold_factor * rms(signal)
     log.debug('RMS: %.1f  threshold: %0.1f' % (threshold, rms(signal)))
-    # ignore everything below threshold amplitude (and convert to DC!)
+    # ignore everything below threshold amplitude (and convert whole signal to DC!)
     signal[signal < threshold] = 0
     return signal
 
@@ -98,7 +99,7 @@ def zero_cross(signal, samplerate, divratio):
     log.debug('Extracted %d crossings' % len(crossings))
     # crossings = np.array([i - signal[i] / (signal[i+1] - signal[i]) for i in crossings])  # interpolate  # FIXME: this is slow
     times_s = crossings / samplerate
-    intervals_s = np.ediff1d(times_s, to_end=0)
+    intervals_s = np.ediff1d(times_s, to_end=0)  # TODO: benchmark, `diff` may be faster than `ediff1d` (but figure out if the 0 appended to end is necessary?)
     freqs_hz = 1 / intervals_s * divratio
     freqs_hz[freqs_hz == np.inf] = 0  # fix divide-by-zero
     return times_s, freqs_hz
@@ -126,7 +127,7 @@ def wav2zc(fname, divratio=8, hpfilter_khz=20, threshold_factor=1.0, interpolate
 
     # check params
     if divratio not in (4, 8, 10, 16, 32):
-        raise Exception('Unsupported divratio: %s (Anabat132 supports 4, 8, 10, 16, 32)', divratio)
+        raise Exception('Unsupported divratio: %s (Anabat132 supports 4, 8, 10, 16, 32)' % divratio)
 
     samplerate, signal = load_wav(fname)
     signal = highpassfilter(signal, samplerate, hpfilter_khz*1000)
