@@ -14,6 +14,8 @@ import sys
 import wave
 import struct
 import os.path
+import re
+from datetime import datetime
 
 import numpy as np
 import scipy.signal
@@ -51,9 +53,16 @@ def load_wav(fname):
 
     w_nchannels, w_sampwidth, w_framerate_hz, w_nframes, w_comptype, w_compname = wav.getparams()
     if w_nchannels > 1:
-        raise Exception('Only MONO .wav files are supported!')
+        raise Exception('Only MONO .wav files are supported!')  # TODO
     if w_sampwidth != 2:
-        raise Exception('Only 16-bit .wav files are supported (not %d)' % (w_sampwidth*8))
+        raise Exception('Only 16-bit .wav files are supported (not %d)' % (w_sampwidth*8))  # TODO
+
+    if w_framerate_hz <= 48000:
+        log.debug('Assuming 10X time-expansion for file with samplerate %.1fkHz', w_framerate_hz/1000.0)
+        w_framerate_hz *= 10
+
+    # TESTING
+    #w_framerate_hz /= 2
 
     wav_bytes = wav.readframes(w_nframes)
     wav.close()
@@ -94,7 +103,8 @@ def noise_gate(signal, threshold_factor):
 
 @print_timing
 def zero_cross(signal, samplerate, divratio):
-    # straight zero-cross
+    """Produce times (seconds) and frequencies (Hz) from calculated zero crossings"""
+    # straight zero-cross without any samplerate interpolation
     crossings = np.where(np.diff(np.sign(signal)))[0][::divratio*2]  # indexes
     log.debug('Extracted %d crossings' % len(crossings))
     # crossings = np.array([i - signal[i] / (signal[i+1] - signal[i]) for i in crossings])  # interpolate  # FIXME: this is slow
@@ -118,7 +128,7 @@ def wav2zc(fname, divratio=8, hpfilter_khz=20, threshold_factor=1.0, interpolate
     """Convert a single .wav file to Anabat format.
     fname: input filename
     divratio: ZCAIM frequency division ratio (4, 8, 10, 16, or 32)
-    hpfilter_khz: frequency in KHz of 6th-order high-pass butterworth filter
+    hpfilter_khz: frequency in KHz of 6th-order high-pass butterworth filter; `None` or 0 to disable HPF
     threshold_factor: RMS multiplier for noise floor, applied after filter
     interpolate: use experimental dot interpolation or not (TODO: use upsampling instead)
     """
@@ -130,10 +140,11 @@ def wav2zc(fname, divratio=8, hpfilter_khz=20, threshold_factor=1.0, interpolate
         raise Exception('Unsupported divratio: %s (Anabat132 supports 4, 8, 10, 16, 32)' % divratio)
 
     samplerate, signal = load_wav(fname)
-    signal = highpassfilter(signal, samplerate, hpfilter_khz*1000)
+    if hpfilter_khz:
+        signal = highpassfilter(signal, samplerate, hpfilter_khz*1000)
     signal = noise_gate(signal, threshold_factor)
     times_s, freqs_hz = zero_cross(signal, samplerate, divratio)
-    times_s, freqs_hz = hpf_zc(times_s, freqs_hz, 0.95*hpfilter_khz*1000)
+    times_s, freqs_hz = hpf_zc(times_s, freqs_hz, hpfilter_khz*1000)
 
     if len(freqs_hz) > 16384:  # CFC Read buffer max
         log.warn('File exceeds max dotcount (%d)! Consider raising DivRatio?', len(freqs_hz))
@@ -141,7 +152,19 @@ def wav2zc(fname, divratio=8, hpfilter_khz=20, threshold_factor=1.0, interpolate
     min_, max_ = np.amin(freqs_hz) if freqs_hz.any() else 0, np.amax(freqs_hz) if freqs_hz.any() else 0
     log.debug('%s\tDots: %d\tMinF: %.1f\tMaxF: %.1f', os.path.basename(fname), len(freqs_hz), min_, max_)
 
-    return times_s, freqs_hz, dict(divratio=divratio)
+    metadata = dict(divratio=divratio, date=extract_timestamp(fname))
+    return times_s, freqs_hz, metadata
+
+
+TIMESTAMP_REGEX = re.compile(r'(\d{8}_\d{6})')
+
+def extract_timestamp(fname):
+    # For now we simply yank from the filename itself, no proper metadata support
+    try:
+        timestamp = TIMESTAMP_REGEX.search(fname).groups()[0]
+        return datetime.strptime(timestamp, '%Y%m%d_%H%M%S')
+    except:
+        return None
 
 
 def _main(fname):
