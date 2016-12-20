@@ -12,6 +12,7 @@ import os
 import os.path
 import sys
 import json
+import webbrowser
 from fnmatch import fnmatch
 from bisect import bisect
 
@@ -27,6 +28,7 @@ import matplotlib.ticker
 import matplotlib.gridspec
 from matplotlib.cm import get_cmap, ScalarMappable
 from matplotlib.colors import Normalize
+from matplotlib.widgets import Cursor, RectangleSelector
 
 from zcview import print_timing
 from zcview.anabat import extract_anabat, AnabatFileWriter
@@ -78,6 +80,7 @@ class ZCViewMainFrame(wx.Frame):
         self.is_compressed = True
         self.is_linear_scale = True
         self.use_smoothed_slopes = False
+        self.display_cursor = False
         self.cmap = 'jet'
         self.harmonics = {'0.5': False, '1': True, '2': False, '3': False}
 
@@ -151,6 +154,11 @@ class ZCViewMainFrame(wx.Frame):
         smooth_item.Check(self.use_smoothed_slopes)
 
         view_menu.AppendSeparator()
+        cursor_item = view_menu.AppendCheckItem(wx.ID_ANY, 'Display Cursor', 'Display horizontal and vertical cursors')
+        self.Bind(wx.EVT_MENU, self.on_cursor_toggle, cursor_item)
+        cursor_item.Check(self.display_cursor)
+
+        view_menu.AppendSeparator()
         h05_item = view_menu.AppendCheckItem(wx.ID_ANY, '1/2 Harmonic', ' One-half harmonic')
         self.Bind(wx.EVT_MENU, lambda e: self.on_harmonic_toggle('0.5'), h05_item)
         h1_item =  view_menu.AppendCheckItem(wx.ID_ANY, 'Fundamental',  ' Fundamental frequency')
@@ -177,7 +185,12 @@ class ZCViewMainFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, lambda e: self.on_divratio_select(32), div32_item)
         menu_bar.Append(convert_menu, '&Conversion')
 
+        # -- Help Menu
         help_menu = wx.Menu()
+        keybindings_item = help_menu.Append(wx.ID_ANY, 'Keyboard Shortcuts', 'View list of keyboard shortcuts')
+        self.Bind(wx.EVT_MENU, lambda e: self.on_view_keybindings, keybindings_item)
+        website_item = help_menu.Append(wx.ID_ANY, 'Myotisoft Website', 'Visit the Myotisoft website')
+        self.Bind(wx.EVT_MENU, lambda e: webbrowser.open_new_tab('http://myotisoft.com'), website_item)
         menu_bar.Append(help_menu, '&Help')
 
         self.SetMenuBar(menu_bar)
@@ -301,16 +314,17 @@ class ZCViewMainFrame(wx.Frame):
         outdir = os.path.join(self.dirname, 'ZCANT_Converted')
         if not os.path.exists(outdir):
             os.makedirs(outdir)
-        outfname = self.filename[:-4]+'.00#'
+        outfname = self.filename[:-4]+'.zc'
         outpath = os.path.join(outdir, outfname)
         timestamp = None  # FIXME
         log.debug('Saving %s ...', outpath)
+
         with AnabatFileWriter(outpath) as out:
-            out.write_header(timestamp, self.wav_divratio, species='Mylu', note='line 1', note1='line 2')
+            out.write_header(timestamp, self.wav_divratio, species='Mylu', note='line 1', note1='line 2')  # FIXME
             time_indexes_s = self._times
             time_indexes_us = self._times * 1000000
             intervals_us = np.diff(time_indexes_us)
-            intervals_us = intervals_us.astype(int)
+            intervals_us = intervals_us.astype(int)  # TODO: round before int cast; consider casting before diff for performance
             out.write_intervals(intervals_us)
 
     def on_about(self, event):
@@ -318,6 +332,10 @@ class ZCViewMainFrame(wx.Frame):
         dlg = wx.MessageDialog(self, 'A boring Zero-Cross Viewer!', 'About ZCView', wx.OK)
         dlg.ShowModal()
         dlg.Destroy()
+
+    def on_view_keybindings(self, event):
+        log.debug('keybindings', event)
+        # TODO display keybindings
 
     def on_exit(self, event):
         log.debug('exit: %s', event)
@@ -432,13 +450,19 @@ class ZCViewMainFrame(wx.Frame):
         self.save_conf()
 
     def on_zoom_in(self, event):
+        if self.window_secs and self.window_secs <= 1.0 / 256:
+            return  # max zoom is 1/256 sec (4 ms)
+
         if self.window_secs is None:
-            self.window_secs = 2.0
+            self.window_secs = 2.0  # jump immediately to 2 secs... revisit this
         else:
             self.window_secs /= 2
         self.reload_file()
 
     def on_zoom_out(self, event):
+        if self.window_secs and self.window_secs >= 32:
+            return  # min zoom is 32 sec (arbitrary)
+
         if self.window_secs is None:
             return
         self.window_secs *= 2
@@ -518,6 +542,9 @@ class ZCViewMainFrame(wx.Frame):
         wx.EndBusyCursor()
 
     def windowed_view(self, times, freqs):
+        if len(times) < 2:
+            return times, freqs
+
         if times[-1] - self.window_start >= self.window_secs:
             #log.info('NORMAL')
             window_from, window_to = bisect(times, self.window_start), bisect(times, self.window_start + self.window_secs)
@@ -542,7 +569,8 @@ class ZCViewMainFrame(wx.Frame):
     def plot(self, times, freqs, metadata):
         title = title_from_path(metadata.get('path', ''))
         conf = dict(compressed=self.is_compressed, colormap=self.cmap, scale='linear' if self.is_linear_scale else 'log',
-                    filter_markers=(self.hpfilter,), harmonics=self.harmonics, smooth_slopes=self.use_smoothed_slopes)
+                    filter_markers=(self.hpfilter,), harmonics=self.harmonics,
+                    smooth_slopes=self.use_smoothed_slopes, display_cursor=self.display_cursor)
 
         if self.window_secs is not None:
             times, freqs = self.windowed_view(times, freqs)
@@ -575,7 +603,7 @@ class ZCViewMainFrame(wx.Frame):
         species = ', '.join(metadata.get('species', [])) or '?'
         min_ = np.amin(freqs > 8000) / 1000 if len(freqs) else 0  # TODO: magic 8k lower bound
         max_ = np.amax(freqs) / 1000 if len(freqs) else 0
-        divratio = self.wav_divratio  # FIXME: if Anabat file, use the actual divratio (unless we're downsampling it)
+        divratio = metadata.get('divratio', self.wav_divratio)
         info = 'HPF: %.1f kHz   Sensitivity: %.2f RMS   Div: %d   View: %s' % (self.hpfilter, self.wav_threshold, divratio, self._pretty_window_size())
         self.statusbar.SetStatusText(
             '%s     Dots: %5d     Fmin: %5.1f kHz     Fmax: %5.1f kHz     Species: %s       [%s]'
@@ -599,6 +627,12 @@ class ZCViewMainFrame(wx.Frame):
     def on_smooth_slope_toggle(self, event):
         log.debug('smoothing...' if not self.use_smoothed_slopes else 'un-smoothing...')
         self.use_smoothed_slopes = not self.use_smoothed_slopes
+        self.reload_file()
+        self.save_conf()  # FIXME: persist this state
+
+    def on_cursor_toggle(self, event):
+        log.debug('displaying cursor...' if not self.display_cursor else 'hiding cursor...')
+        self.display_cursor = not self.display_cursor
         self.reload_file()
         self.save_conf()  # FIXME: persist this state
 
@@ -649,6 +683,8 @@ class ZCViewMainFrame(wx.Frame):
         self.save_conf()
 
     def on_hpfilter_down(self, event):
+        if self.hpfilter < 2.5:
+            return
         self.hpfilter -= 2.5
         log.debug('decreasing high-pass filter to %.1f KHz', self.hpfilter)
         self.load_file(self.dirname, self.filename)
@@ -769,10 +805,11 @@ def slopes(x, y, smooth_slopes=False):
         return np.array([])
     elif len(x) == 1:
         return np.array([0.0])
-    slopes = np.diff(np.log2(y)) / np.diff(np.log2(x))
-    slopes = np.append(slopes, slopes[-1])  # hack for final dot
+    y_octaves = np.log2(y)  # calculation for difference wil be same in Hz or kHz, so no need to convert
+    slopes = np.diff(y_octaves) / np.diff(x)
+    slopes = np.append(slopes, slopes[-1])  # FIXME: hack for final dot
     slopes = -1 * slopes  # Analook inverts slope so we do also
-    log.debug('Smax: %s OPS   Smin: %s OPS', np.amax(slopes), np.amin(slopes))
+    log.debug('Smax: %.1f OPS   Smin: %.1f OPS', np.amax(slopes) or -9999, np.amin(slopes) or -9999)
     slopes[slopes < -5000] = 0.0  # super-steep is probably noise or a new pulse
     slopes[slopes > 10000] = 0.0  # TODO: refine these magic boundary values!
     if smooth_slopes:
@@ -787,6 +824,8 @@ def slopes(x, y, smooth_slopes=False):
 
 class ZeroCrossPlotPanel(PlotPanel):
 
+    SLOPE_MAX = 750  # highest slope value (oct/sec) of our color scale; TODO: make scale log-based?
+
     config = {
         'freqminmax': (15, 100),   # min and max frequency to display KHz
         'scale': 'linear',         # linear | log
@@ -794,6 +833,7 @@ class ZeroCrossPlotPanel(PlotPanel):
         'filter_markers': (20.0,), # reference lines kHz
         'compressed': False,       # compressed view (True) or realtime (False)
         'smooth_slopes': True,     # smooth out noisy slope values
+        'display_cursor': False,   # display horiz and vert cursor lines
         'colormap': 'jet',         # named color map
         'harmonics': {'0.5': False, '1': True, '2': False, '3': False},
     }
@@ -818,11 +858,11 @@ class ZeroCrossPlotPanel(PlotPanel):
 
         gs = matplotlib.gridspec.GridSpec(1, 3, width_ratios=[85, 5, 10], wspace=0.025)
 
-        # Main dot scatter plot
-        self.dot_plot = self.figure.add_subplot(gs[0]) #axes([0,0,1.0,1.0])  #[0, 0, 0.84, 1.0])
+        # --- Main dot scatter plot ---
+        self.dot_plot = self.figure.add_subplot(gs[0])
 
         miny, maxy = self.config['freqminmax']
-        plot_kwargs = dict(cmap=self.config['colormap'], vmin=0, vmax=600, linewidths=0.0)  # vmin/vmax define where we scale our colormap
+        plot_kwargs = dict(cmap=self.config['colormap'], vmin=0, vmax=self.SLOPE_MAX, linewidths=0.0)  # vmin/vmax define where we scale our colormap
         # TODO: neither of these are proper compressed or non-compressed views!
         if len(self.freqs) < 2:
             dot_scatter = self.dot_plot.scatter([], [])  # empty set
@@ -861,21 +901,37 @@ class ZeroCrossPlotPanel(PlotPanel):
         for freqk in self.config['filter_markers']:
             self.dot_plot.axhline(freqk, color='b', linestyle='--')
 
-        # Colorbar plot
-        cbar_plot = self.figure.add_subplot(gs[1]) #axes([0.85, 0, 0.05, 1.0])
+        # draw X and Y cursor; this may beform better if we can use Wx rather than MatPlotLib, see `wxcursor_demo.py`
+        if self.config['display_cursor']:
+            self.cursor1 = Cursor(self.dot_plot, useblit=True, color='black', linewidth=1)
+
+        # experimental rectangle selection
+        def onselect(eclick, erelease):
+            """eclick and erelease are matplotlib events at press and release"""
+            x1, y1 = eclick.xdata, eclick.ydata
+            x2, y2 = erelease.xdata, erelease.ydata
+            print ' Select  (%.3f,%.1f) -> (%.3f,%.1f)  button: %d' % (x1, y1, x2, y2, eclick.button)
+            slope = (np.log2(y2) - np.log2(y1)) / (x2 - x1)  # FIXME: we don't support compressed mode here!
+            print '         slope: %.1f oct/sec  (%.1f kHz / %.3f sec)' % (slope, y2 - y1, x2 - x1)
+
+        self.selector = RectangleSelector(self.dot_plot, onselect, drawtype='box')
+        #connect('key_press_event', toggle_selector)
+
+        # --- Colorbar plot ---
+        cbar_plot = self.figure.add_subplot(gs[1])
         cbar_plot.set_title('Slope')
         try:
             cbar = self.figure.colorbar(dot_scatter, cax=cbar_plot, ticks=[])
         except TypeError, e:
             # colorbar() blows up on empty set
             sm = ScalarMappable(cmap=self.config['colormap'])  # TODO: this should probably share colormap code with histogram
-            sm.set_array(np.array([0, 1]))
+            sm.set_array(np.array([0, self.SLOPE_MAX]))
             cbar = self.figure.colorbar(sm, cax=cbar_plot, ticks=[])
         cbar.ax.set_yticklabels([])
 
-        # Hist plot
+        # --- Hist plot ---
 
-        hist_plot = self.figure.add_subplot(gs[2]) #axes([0.91, 0, 0.09, 1.0], sharey=self.dot_plot)
+        hist_plot = self.figure.add_subplot(gs[2])
         hist_plot.set_title('Freqs')
 
         #bins = int(round((maxy - miny) / 2.5))  # TODO: this should probably just be fixed at some size, eg. 2.5khz
@@ -888,7 +944,7 @@ class ZeroCrossPlotPanel(PlotPanel):
         hist_plot.get_yaxis().set_major_formatter(matplotlib.ticker.ScalarFormatter())
 
         # color histogram bins
-        cmap = ScalarMappable(cmap=self.config['colormap'], norm=Normalize(vmin=0, vmax=600))  # TODO: magic slope upper limit
+        cmap = ScalarMappable(cmap=self.config['colormap'], norm=Normalize(vmin=0, vmax=self.SLOPE_MAX))  # TODO: magic slope upper limit
         for bin_start, bin_end, patch in zip(bins[:-1], bins[1:], patches):
             bin_slopes = self.slopes[(bin_start <= self.freqs) & (self.freqs < bin_end)]
             avg_slope = np.median(bin_slopes) if bin_slopes.any() else 0
@@ -905,7 +961,12 @@ class ZeroCrossPlotPanel(PlotPanel):
         for freqk in self.config['filter_markers']:
             hist_plot.axhline(freqk, color='b', linestyle='--')
 
-    def on_mouse_motion(self, event):
-        if event.inaxes:
-            x, y = event.xdata, event.ydata
-            #print x, y
+        # draw Y cursor
+        if self.config['display_cursor']:
+            self.cursor3 = Cursor(hist_plot, useblit=True, color='black', linewidth=1, vertOn=False, horizOn=True)
+
+
+    # def on_mouse_motion(self, event):
+    #     if event.inaxes:
+    #         x, y = event.xdata, event.ydata
+    #         print '%.1fkHz, %.1f' % (y, x)
