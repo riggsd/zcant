@@ -102,12 +102,14 @@ def noise_gate(signal, threshold_factor):
 
 
 @print_timing
-def zero_cross(signal, samplerate, divratio):
+def zero_cross(signal, samplerate, divratio, interpolate=False):
     """Produce times (seconds) and frequencies (Hz) from calculated zero crossings"""
     # straight zero-cross without any samplerate interpolation
+    divratio /= 2  # required so that our algorithm agrees with the Anabat ZCAIM algorithm
     crossings = np.where(np.diff(np.sign(signal)))[0][::divratio*2]  # indexes
+    if interpolate:
+        crossings = np.array([i - signal[i] / (signal[i+1] - signal[i]) for i in crossings]) # FIXME: this is slow
     log.debug('Extracted %d crossings' % len(crossings))
-    # crossings = np.array([i - signal[i] / (signal[i+1] - signal[i]) for i in crossings])  # interpolate  # FIXME: this is slow
     times_s = crossings / samplerate
     intervals_s = np.ediff1d(times_s, to_end=0)  # TODO: benchmark, `diff` may be faster than `ediff1d` (but figure out if the 0 appended to end is necessary?)
     freqs_hz = 1 / intervals_s * divratio
