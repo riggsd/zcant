@@ -56,11 +56,12 @@ def title_from_path(path):
     root, parent = os.path.split(root)
     root, gparent = os.path.split(root)
     if gparent:
-        return '%s %s %s %s %s' % (gparent, os.sep, parent, os.sep, fname)
+        title = '%s %s %s %s %s' % (gparent, os.sep, parent, os.sep, fname)
     elif parent:
-        return '%s %s %s' % (parent, os.sep, fname)
+        title = '%s %s %s' % (parent, os.sep, fname)
     else:
-        return fname
+        title = fname
+    return title.replace('_', ' ')
 
 
 def beep():
