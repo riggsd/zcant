@@ -61,9 +61,6 @@ def load_wav(fname):
         log.debug('Assuming 10X time-expansion for file with samplerate %.1fkHz', w_framerate_hz/1000.0)
         w_framerate_hz *= 10
 
-    # TESTING
-    #w_framerate_hz /= 2
-
     wav_bytes = wav.readframes(w_nframes)
     wav.close()
 
@@ -145,7 +142,7 @@ def wav2zc(fname, divratio=8, hpfilter_khz=20, threshold_factor=1.0, interpolate
     if hpfilter_khz:
         signal = highpassfilter(signal, samplerate, hpfilter_khz*1000)
     signal = noise_gate(signal, threshold_factor)
-    times_s, freqs_hz = zero_cross(signal, samplerate, divratio)
+    times_s, freqs_hz = zero_cross(signal, samplerate, divratio, interpolate)
     times_s, freqs_hz = hpf_zc(times_s, freqs_hz, hpfilter_khz*1000)
 
     if len(freqs_hz) > 16384:  # CFC Read buffer max
@@ -154,7 +151,7 @@ def wav2zc(fname, divratio=8, hpfilter_khz=20, threshold_factor=1.0, interpolate
     min_, max_ = np.amin(freqs_hz) if freqs_hz.any() else 0, np.amax(freqs_hz) if freqs_hz.any() else 0
     log.debug('%s\tDots: %d\tMinF: %.1f\tMaxF: %.1f', os.path.basename(fname), len(freqs_hz), min_, max_)
 
-    metadata = dict(divratio=divratio, date=extract_timestamp(fname))
+    metadata = dict(divratio=divratio, timestamp=extract_timestamp(fname))
     return times_s, freqs_hz, metadata
 
 

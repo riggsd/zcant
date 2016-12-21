@@ -1,5 +1,7 @@
+import io
 import mmap
 import struct
+import unicodedata
 import contextlib
 from glob import glob
 from os.path import basename
@@ -27,9 +29,11 @@ def _s(s):
 
 @print_timing
 def hpf_zc(times_s, freqs_hz, cutoff_freq_hz):
+    if not cutoff_freq_hz or len(freqs_hz) == 0:
+        return times_s, freqs_hz
     hpf_mask = np.where(freqs_hz > cutoff_freq_hz)
     junk_count = len(freqs_hz) - np.count_nonzero(hpf_mask)
-    print 'Throwing out %d dots of %d (%.1f%%)' % (junk_count, len(freqs_hz), junk_count/len(freqs_hz)*100)
+    log.debug('Throwing out %d dots of %d (%.1f%%)', junk_count, len(freqs_hz), float(junk_count)/len(freqs_hz)*100)
     return times_s[hpf_mask], freqs_hz[hpf_mask]
 
 
@@ -46,7 +50,11 @@ def extract_anabat(fname, hpfilter_khz=8.0):
         metadata = dict(date=date, loc=_s(loc), species=species, spec=_s(spec), note1=_s(note1), note2=_s(note2), divratio=divratio)
         if file_type >= 132:
             year, month, day, hour, minute, second, second_hundredths, microseconds, id_code, gps_data = struct.unpack_from(ANABAT_132_ADDL_DATA_INFO_FMT, m, 0x120)
-            timestamp = datetime(year, month, day, hour, minute, second, second_hundredths * 10000 + microseconds)
+            try:
+                timestamp = datetime(year, month, day, hour, minute, second, second_hundredths * 10000 + microseconds)
+            except ValueError, e:
+                log.exception('Failed extracting timestamp')
+                timestamp = None
             metadata.update(dict(timestamp=timestamp, id=_s(id_code), gps=_s(gps_data)))
         log.debug('file_type: %d\tdata_info_pointer: 0x%3x\tdata_pointer: 0x%3x', file_type, data_info_pointer, data_pointer)
         log.debug(metadata)
@@ -63,7 +71,7 @@ def extract_anabat(fname, hpfilter_khz=8.0):
                 # Single byte is a 7-bit signed two's complement offset from previous interval
                 offset = byte if byte < 2**6 else byte - 2**7  # clever two's complement unroll
                 if int_i > 0:
-                    intervals_us[int_i] = intervals_us[int_i-1] + offset
+                    intervals_us[int_i] = intervals_us[int_i-1] + offset  # FIXME: IndexError: index 16384 is out of bounds for axis 0 with size 16384
                     int_i += 1
                 else:
                     log.warning('Sequence file starts with a one-byte interval diff! Skipping byte %x', byte)
@@ -104,6 +112,7 @@ def extract_anabat(fname, hpfilter_khz=8.0):
                 status = byte & 0b00011111
                 i += 1
                 dotcount = Byte.unpack_from(m, i)[0]
+                log.debug('UNSUPPORTED: Status %X for %d dots', status, dotcount)
                 # TODO: not yet supported
 
             else:
@@ -115,14 +124,159 @@ def extract_anabat(fname, hpfilter_khz=8.0):
     intervals_s = intervals_us * 1e-6
     times_s = np.cumsum(intervals_s)
     freqs_hz = 1 / intervals_s * (divratio / 2)
-    freqs_hz[freqs_hz == np.inf] = 0  # fix divide-by-zero
+    freqs_hz[freqs_hz == np.inf] = 0  # TODO: fix divide-by-zero
 
     min_, max_ = min(freqs_hz) if any(freqs_hz) else 0, max(freqs_hz) if any(freqs_hz) else 0
     log.debug('%s\tDots: %d\tMinF: %.1f\tMaxF: %.1f', basename(fname), len(freqs_hz), min_/1000.0, max_/1000.0)
 
-    times_s, freqs_hz = hpf_zc(times_s, freqs_hz, 0.95*hpfilter_khz*1000)
+    times_s, freqs_hz = hpf_zc(times_s, freqs_hz, hpfilter_khz*1000)
 
     return times_s, freqs_hz, metadata
+
+
+def anabat_filename(timestamp):
+    """Convert python datetime to anabat-style 8.3 filename, eg 'M7122036.45#', or None if not possible"""
+    if timestamp.year < 1990:
+        return None
+    year = str(timestamp.year - 1990) if timestamp.year < 2000 else chr(timestamp.year - 2000 + ord('A'))
+    month = hex(timestamp.month)[2].upper()
+    return '%s%s%02d%02d%02d.%02d#' % (year, month, timestamp.day, timestamp.hour, timestamp.minute, timestamp.second)
+
+
+def _pad(s, length, pad_chr=' '):
+    """Pad or truncate a string to specified length, mangling unicode down to str in the process"""
+    if not s:
+        return length * pad_chr
+    if type(s) == unicode:
+        s = unicodedata.normalize('NFKD', s).encode('ascii', 'ignore')
+    return s[:length] + (length-len(s))*pad_chr
+
+
+def _get_bytes(val, count):
+    """Get a specified number of bytes from a numeric value.
+    n = 0x345678
+    get_bytes(n, 4) -> [0x78, 0x56, 0x34, 0x0]
+    """
+    return [val >> i*8 & 0xff for i in range(count)]
+
+
+class AnabatFileWriter(object):
+    """Interface for writing an Anabat file (v132).
+
+    Does NOT support GPS, altitude, point status (offdots, maindots), out-of-range points.
+
+    with AnabatWriter(outfname) as out:
+        out.write_header(timestamp, 8, species='Mylu', note='line 1', note1='line 2')
+        out.write_intervals(sequence_of_intervals)
+    """
+
+    def __init__(self, fname):
+        self.fname = fname
+        self._f = io.open(fname, 'wb', buffering=True)
+
+        self.byte_count = 0      # current file size in bytes, including header
+        self.interval_count = 0  # current count of interval values
+        self.length_us = 0       # current length in microseconds
+
+        self._prev_interval = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
+    def __repr__(self):
+        return '%s(%s)' % (self.__class__.__name__, self.fname)
+
+    def write_header(self, timestamp, divratio, tape=None, loc=None, species=None, spec=None, note1=None, note2=None, id_code=None, res1=25000, vres=0x52):
+        """Write the Anabat 132 metadata header. This MUST be called before `write_intervals()`."""
+        date = timestamp.strftime('%Y%m%d') if timestamp else '        '
+        self._write_start()
+        self._write_text_header(tape, date, loc, species, spec, note1, note2)
+        self._write_data_information_table(res1, divratio, vres)
+        self._write_timestamp_etc(timestamp, id_code)
+
+    def _write_start(self):
+        self._f.write( struct.pack('< H x B 2x', 0x011a, 132) )  # pointer to data info table (0x011a), file structure version (Anabat 132)
+        self.byte_count = 6
+
+    def _write_text_header(self, tape=None, date=None, loc=None, species=None, spec=None, note=None, note1=None):
+
+        def _write_str(s, length):
+            self._f.write( struct.pack('< %ds' % length, _pad(s, length)) )
+
+        _write_str(tape, 8)
+        _write_str(date, 8)
+        _write_str(loc, 40)
+        _write_str(species, 50)
+        _write_str(spec, 16)
+        _write_str(note, 73)
+        _write_str(note1, 80)
+        self._f.write( struct.pack('x') )
+        self.byte_count += 275
+
+    def _write_data_information_table(self, res1=25000, divratio=16, vres=0x52):
+        #log.debug('_write_data_information_table(res1=%s, divratio=%s, vres=%s)', res1, divratio, vres)
+        self._f.write( struct.pack('< H H B B', 0x0150, res1, divratio, vres))
+        self.byte_count += 6
+
+    def _write_timestamp_etc(self, timestamp, id_code=None):
+        if timestamp:
+            self._f.write( struct.pack('< H B B B B B B H', timestamp.year, timestamp.month, timestamp.day, timestamp.hour, timestamp.minute, timestamp.second, timestamp.microsecond / 10000, timestamp.microsecond % 10000) )
+        else:
+            self._f.write( struct.pack('< H B B B B B B H', 0, 0, 0, 0, 0, 0, 0, 0) )
+        self._f.write( struct.pack('< 6s 32s', _pad(id_code, 6), '') )  # TODO: GPS position
+        self.byte_count += 48
+
+    def write_intervals(self, intervals):
+        """Write a sequence of transition intervals. You may call this multiple times."""
+        for interval in intervals:
+            self.interval_count += 1
+            self.length_us += interval
+
+            if self._prev_interval is not None:
+                diff = interval - self._prev_interval
+
+            if self._prev_interval is not None and abs(diff) < 64:
+                # we can store this interval in one byte, as the offset from previous interval
+                if diff >= 0:
+                    self._f.write( struct.pack('< B', diff) )
+                else:
+                    # negative number is 7-bit twos-compliment, jeesh!
+                    byte = ~ (abs(diff) - 1) & 0x7f  # 0b01111111 to ensure bit 7 is zero
+                    self._f.write( struct.pack('< B', byte) )
+                self.byte_count += 1
+
+            elif interval < 0x2000:
+                # interval represented as 13 bits in a two-byte chunk
+                bytes = _get_bytes(interval, 2)
+                self._f.write( struct.pack('< 2B', 0x80 | bytes[1], bytes[0]) )  # set 0b10100000 on highest byte
+                self.byte_count += 2
+
+            elif interval < 0x200000:
+                # interval represented as 21 bits in a three-byte chunk
+                bytes = _get_bytes(interval, 3)
+                self._f.write( struct.pack('< 3B', 0xa0 | bytes[2], bytes[1], bytes[0]) )  # set 0b110xxxxx on highest byte
+                self.byte_count += 3
+
+            elif interval < 0x20000000:
+                # interval represented as 29 bits in a four-byte chunk
+                bytes = _get_bytes(interval, 4)
+                self._f.write( struct.pack('< 4B', 0xc0 | bytes[3], bytes[2], bytes[1], bytes[0]) )  # set 0b11000000 on highest byte
+                self.byte_count += 4
+
+            else:
+                log.warn('Interval %s out of range, unable to encode!', interval)
+
+            self._prev_interval = interval
+
+            # TODO: issue warning if interval count, byte length, or time exceeds max allowed
+
+    def close(self):
+        """Close the outfile and free resources."""
+        self._f.close()
+
 
 
 if __name__ == '__main__':

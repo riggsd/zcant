@@ -25,7 +25,7 @@ l ........ Toggle linear/log scale
 c ........ Switch color palette
 SHIFT+c .. Backward color palette
 
-CMD+s .... Save a .PNG plot image
+CMD+p .... Save a .PNG plot image
 
 
 WAV Conversion
@@ -36,3 +36,5 @@ DOWN ... Decrease .wav conversion threshold
 
 SHIFT+UP .... Increase .wav high-pass filter
 SHIFT+DOWN .. Decrease .wav high-pass filter
+
+CMD+s .... Save converted .wav as an Anabat file

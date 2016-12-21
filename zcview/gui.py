@@ -85,7 +85,7 @@ class ZCViewMainFrame(wx.Frame):
         self.cmap = 'jet'
         self.harmonics = {'0.5': False, '1': True, '2': False, '3': False}
 
-        self.wav_threshold = 1.25
+        self.wav_threshold = 1.5
         self.wav_divratio = 16
         self.hpfilter = 20.0
 
@@ -95,13 +95,17 @@ class ZCViewMainFrame(wx.Frame):
         self.read_conf()
 
         # Initialize and load...
+        log.debug('Initializing GUI...')
         self.init_gui()
+        log.debug('GUI initialized.')
 
         if self.dirname and self.filename:
             try:
                 self.load_file(self.dirname, self.filename)
             except Exception, e:
                 log.exception('Failed opening default file: %s', os.path.join(self.dirname, self.filename))
+        else:
+            log.debug('No valid dirname/filename; doing nothing.')
 
     def init_gui(self):
         self.plotpanel = None
@@ -312,17 +316,16 @@ class ZCViewMainFrame(wx.Frame):
         # For now, we will only save a converted .WAV as Anabat file
         if not self.filename.lower().endswith('.wav'):
             return
-        outdir = os.path.join(self.dirname, 'ZCANT_Converted')
+        outdir = os.path.join(self.dirname, '_ZCANT_Converted')
         if not os.path.exists(outdir):
             os.makedirs(outdir)
         outfname = self.filename[:-4]+'.zc'
         outpath = os.path.join(outdir, outfname)
-        timestamp = None  # FIXME
+        timestamp = self._metadata.get('timestamp', None)
         log.debug('Saving %s ...', outpath)
 
         with AnabatFileWriter(outpath) as out:
-            out.write_header(timestamp, self.wav_divratio, species='Mylu', note='line 1', note1='line 2')  # FIXME
-            time_indexes_s = self._times
+            out.write_header(timestamp, self.wav_divratio, species='', note1='Myotisoft ZCView', note2='')  # TODO
             time_indexes_us = self._times * 1000000
             intervals_us = np.diff(time_indexes_us)
             intervals_us = intervals_us.astype(int)  # TODO: round before int cast; consider casting before diff for performance
