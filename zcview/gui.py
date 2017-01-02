@@ -915,21 +915,28 @@ class ZeroCrossPlotPanel(PlotPanel):
                            c=self.slopes, s=self.scaled_amplitudes,   # dot color and size
                            linewidths=0.0,
                            )
-        # TODO: neither of these are proper compressed or non-compressed views!
+
+        def plot_harmonics(x):
+            """Reusable way to plot harmonics from different view types"""
+            if self.config['harmonics']['0.5']:
+                self.dot_plot.scatter(x, self.freqs/2, alpha=0.2, **plot_kwargs)
+            if self.config['harmonics']['2']:
+                self.dot_plot.scatter(x, self.freqs*2, alpha=0.2, **plot_kwargs)
+            if self.config['harmonics']['3']:
+                self.dot_plot.scatter(x, self.freqs*3, alpha=0.2, **plot_kwargs)
+
         if len(self.freqs) < 2:
             dot_scatter = self.dot_plot.scatter([], [])  # empty set
-        elif self.config['compressed']:
+        elif not self.config['compressed']:
+            # Realtime View
+            plot_harmonics(self.times)
             dot_scatter = self.dot_plot.scatter(self.times, self.freqs, **plot_kwargs)
             self.dot_plot.set_xlim(self.times[0], self.times[-1])
             self.dot_plot.set_xlabel('Time (sec)')
         else:
+            # Compressed (pseudo-Dot-Per-Pixel) View
             x = range(len(self.freqs))
-            if self.config['harmonics']['0.5']:
-                dot_scatter_h05 = self.dot_plot.scatter(x, self.freqs/2, alpha=0.2, **plot_kwargs)
-            if self.config['harmonics']['2']:
-                dot_scatter_h2 = self.dot_plot.scatter(x, self.freqs*2, alpha=0.2, **plot_kwargs)
-            if self.config['harmonics']['3']:
-                dot_scatter_h3 = self.dot_plot.scatter(x, self.freqs*3, alpha=0.2, **plot_kwargs)
+            plot_harmonics(x)
             dot_scatter = self.dot_plot.scatter(x, self.freqs, **plot_kwargs)
             self.dot_plot.set_xlim(0, len(x))
             self.dot_plot.set_xlabel('Dot Count')
