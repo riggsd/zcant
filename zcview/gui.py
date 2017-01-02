@@ -1000,7 +1000,9 @@ class ZeroCrossPlotPanel(PlotPanel):
         bin_min, bin_max = self.config['freqminmax']
         bin_size = 2  # khz  # TODO: make this configurable
         bin_n = int((bin_max - bin_min) / bin_size)
-        n, bins, patches = hist_plot.hist(self.freqs, orientation='horizontal', range=self.config['freqminmax'], bins=bin_n)
+        n, bins, patches = hist_plot.hist(self.freqs, weights=self.amplitudes,
+                                          range=self.config['freqminmax'], bins=bin_n,
+                                          orientation='horizontal')
         hist_plot.set_yscale(self.config['scale'])
         hist_plot.set_ylim(miny, maxy)
         hist_plot.get_yaxis().set_major_formatter(matplotlib.ticker.ScalarFormatter())
@@ -1008,8 +1010,11 @@ class ZeroCrossPlotPanel(PlotPanel):
         # color histogram bins
         cmap = ScalarMappable(cmap=self.config['colormap'], norm=Normalize(vmin=self.SLOPE_MIN, vmax=self.SLOPE_MAX))  # TODO: magic slope upper limit
         for bin_start, bin_end, patch in zip(bins[:-1], bins[1:], patches):
-            bin_slopes = self.slopes[(bin_start <= self.freqs) & (self.freqs < bin_end)]
-            avg_slope = np.median(bin_slopes) if bin_slopes.any() else 0
+            bin_mask = (bin_start <= self.freqs) & (self.freqs < bin_end)
+            bin_slopes = self.slopes[bin_mask]
+            slope_weights = self.scaled_amplitudes[bin_mask]
+            avg_slope = np.average(bin_slopes, weights=slope_weights) if bin_slopes.any() else 0
+            #avg_slope = np.median(bin_slopes) if bin_slopes.any() else 0
             patch.set_facecolor(cmap.to_rgba(avg_slope))
 
         hist_plot.yaxis.set_ticks(ticks)
