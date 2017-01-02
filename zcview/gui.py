@@ -87,7 +87,8 @@ class ZCViewMainFrame(wx.Frame):
 
         self.wav_threshold = 1.5
         self.wav_divratio = 16
-        self.hpfilter = 20.0
+        self.hpfilter = 17.5
+        self.wav_interpolation = False
 
         self.window_secs = None
         self.window_start = 0.0
@@ -188,6 +189,11 @@ class ZCViewMainFrame(wx.Frame):
         div32_item = convert_menu.AppendRadioItem(wx.ID_ANY, 'Div 32', ' 1/32 frequency division ratio')
         div32_item.Check(self.wav_divratio == 32)
         self.Bind(wx.EVT_MENU, lambda e: self.on_divratio_select(32), div32_item)
+
+        convert_menu.AppendSeparator()
+        interpolation_item = convert_menu.AppendCheckItem(wx.ID_ANY, 'Interpolate', 'Interpolate between .WAV samples')
+        self.Bind(wx.EVT_MENU, self.on_interpolation_toggle, interpolation_item)
+        interpolation_item.Check(self.wav_interpolation)
         menu_bar.Append(convert_menu, '&Conversion')
 
         # -- Help Menu
@@ -372,6 +378,7 @@ class ZCViewMainFrame(wx.Frame):
             'colormap':   self.cmap,
             'harmonics':  self.harmonics,
             'smooth_slopes': self.use_smoothed_slopes,
+            'interpolation': self.wav_interpolation,
         }
         with open(CONF_FNAME, 'w') as outf:
             logging.debug('Writing conf file: %s', CONF_FNAME)
@@ -389,11 +396,15 @@ class ZCViewMainFrame(wx.Frame):
             self.is_linear_scale = conf.get('linear', True)
             self.cmap = conf.get('colormap', 'jet')
             self.use_smoothed_slopes = conf.get('smooth_slopes', False)
+            self.wav_interpolation = conf.get('interpolation', True)
             harmonics = conf.get('harmonics', {'0.5': False, '1': True, '2': False, '3': False})
 
     def listdir(self, dirname):
         """Produce a list of supported filenames in the specified directory"""
-        return [fname for fname in sorted(os.listdir(dirname), key=lambda s: s.lower()) if (fnmatch(fname, '*.??#') or fnmatch(fname.lower(), '*.zc') or fnmatch(fname.lower(), '*.wav')) and not fname.startswith('._')]
+        return [fname for fname in sorted(os.listdir(dirname), key=lambda s: s.lower()) if (
+                fnmatch(fname, '*.??#') or fnmatch(fname.lower(), '*.zc') or fnmatch(fname.lower(), '*.wav')
+                ) and not fname.startswith('._')   # MacOSX meta-files on a FAT filesystem
+        ]
 
     def on_prev_file(self, event):
         log.debug('prev_file: %s', event)
@@ -500,18 +511,21 @@ class ZCViewMainFrame(wx.Frame):
         self.reload_file()
 
     def extract(self, path):
-        """Extract (times, freqs, metadata) from supported filetypes"""
+        """Extract (times, freqs, amplitudes, metadata) from supported filetypes"""
         ext = os.path.splitext(path)[1].lower()
         if ext.endswith('#') or ext == '.zc':
             return extract_anabat(path, hpfilter_khz=self.hpfilter)
         elif ext == '.wav':
-            return wav2zc(path, divratio=self.wav_divratio, threshold_factor=self.wav_threshold, hpfilter_khz=self.hpfilter)
+            return wav2zc(path, divratio=self.wav_divratio,
+                          threshold_factor=self.wav_threshold,
+                          hpfilter_khz=self.hpfilter,
+                          interpolate=self.wav_interpolation)
         else:
             raise Exception('Unknown file type: %s', path)
 
     def reload_file(self):
         """Re-plot current file without reloading from disk"""
-        return self.plot(self._times, self._freqs, self._metadata)
+        return self.plot(self._times, self._freqs, self._amplitudes, self._metadata)
 
     def load_file(self, dirname, filename):
         """Called to either load a new file fresh, or load the current file when we've made
@@ -526,28 +540,28 @@ class ZCViewMainFrame(wx.Frame):
         if not path:
             return
 
-        #beachball = wx.BusyCursor()
         wx.BeginBusyCursor()
 
         try:
-            times, freqs, metadata = self.extract(path)
+            times, freqs, amplitudes, metadata = self.extract(path)
 
             metadata['path'] = path
             metadata['filename'] = filename
             log.debug('    %s:  times: %d  freqs: %d', filename, len(times), len(freqs))
 
-            self.plot(times, freqs, metadata)
+            self.plot(times, freqs, amplitudes, metadata)
 
-            self.dirname, self.filename, self._times, self._freqs, self._metadata = dirname, filename, times, freqs, metadata  # only set on success
+            self.dirname, self.filename = dirname, filename
+            self._times, self._freqs, self._amplitudes, self._metadata = times, freqs, amplitudes, metadata  # only set on success
         except Exception, e:
             log.exception('Barfed loading file: %s', path)
 
-        #del beachball
         wx.EndBusyCursor()
 
-    def windowed_view(self, times, freqs):
+    def windowed_view(self, times, freqs, amplitudes):
+        # FIXME: don't jump to 2sec window if recording is < 2secs
         if len(times) < 2:
-            return times, freqs
+            return times, freqs, amplitudes
 
         if times[-1] - self.window_start >= self.window_secs:
             #log.info('NORMAL')
@@ -560,27 +574,30 @@ class ZCViewMainFrame(wx.Frame):
             window_from, window_to = bisect(times, times[-1] - self.window_secs), len(times)-1  # panned to the end
 
         times, freqs = times[window_from:window_to], freqs[window_from:window_to]
+        amplitudes = amplitudes[window_from:window_to] if amplitudes is not None else None
 
         # because times is sparse, we need to fill in edge cases (unfortunately np.insert, np.append copy rather than view)
         if len(times) == 0 or times[0] > self.window_start:
             times, freqs = np.insert(times, 0, self.window_start), np.insert(freqs, 0, self.window_start)
+            amplitudes = np.insert(amplitudes, 0, self.window_start) if amplitudes is not None else None
         if times[-1] < self.window_start + self.window_secs:
             times, freqs = np.append(times, self.window_start + self.window_secs), np.append(freqs, 0)  # this is wrong for END OF FILE case
+            amplitudes = np.append(amplitudes, 0) if amplitudes is not None else None  # ?
 
         log.debug('%.1f sec window:  times: %d  freqs: %d', self.window_secs, len(times), len(freqs))
-        return times, freqs
+        return times, freqs, amplitudes
 
-    def plot(self, times, freqs, metadata):
+    def plot(self, times, freqs, amplitudes, metadata):
         title = title_from_path(metadata.get('path', ''))
         conf = dict(compressed=self.is_compressed, colormap=self.cmap, scale='linear' if self.is_linear_scale else 'log',
                     filter_markers=(self.hpfilter,), harmonics=self.harmonics,
                     smooth_slopes=self.use_smoothed_slopes, display_cursor=self.display_cursor)
 
         if self.window_secs is not None:
-            times, freqs = self.windowed_view(times, freqs)
+            times, freqs, amplitudes = self.windowed_view(times, freqs, amplitudes)
 
         try:
-            panel = ZeroCrossPlotPanel(self, times, freqs, name=title, config=conf)
+            panel = ZeroCrossPlotPanel(self, times, freqs, amplitudes, name=title, config=conf)
             panel.Show()
 
             self.update_statusbar(times, freqs, metadata)
@@ -598,14 +615,16 @@ class ZCViewMainFrame(wx.Frame):
         elif self.window_secs >= 1.0:
             return str(self.window_secs) + ' secs'
         else:
-            return '1/%d sec' % int(round(1 / self.window_secs))
+            fractional_secs = int(round(1 / self.window_secs))
+            ms = int(round(self.window_secs * 1000))
+            return '1/%d sec (%d ms)' % (fractional_secs, ms)
 
     def update_statusbar(self, times, freqs, metadata):
         timestamp = metadata.get('timestamp', None) or metadata.get('date', '????-??-??')
         if hasattr(timestamp, 'strftime'):
             timestamp = timestamp.strftime('%Y-%m-%d %H:%M:%S')
         species = ', '.join(metadata.get('species', [])) or '?'
-        min_ = np.amin(freqs > 8000) / 1000 if len(freqs) else 0  # TODO: magic 8k lower bound
+        min_ = np.amin(freqs) / 1000 if len(freqs) else 0  # TODO: non-zero freqs only
         max_ = np.amax(freqs) / 1000 if len(freqs) else 0
         divratio = metadata.get('divratio', self.wav_divratio)
         info = 'HPF: %.1f kHz   Sensitivity: %.2f RMS   Div: %d   View: %s' % (self.hpfilter, self.wav_threshold, divratio, self._pretty_window_size())
@@ -647,6 +666,12 @@ class ZCViewMainFrame(wx.Frame):
 
     def on_divratio_select(self, divratio):
         self.wav_divratio = divratio
+        self.load_file(self.dirname, self.filename)
+        self.save_conf()
+
+    def on_interpolation_toggle(self, event):
+        log.debug('interpolating .WAV samples' if not self.wav_interpolation else 'disabling .WAV interpolation')
+        self.wav_interpolation = not self.wav_interpolation
         self.load_file(self.dirname, self.filename)
         self.save_conf()
 
@@ -809,54 +834,73 @@ def slopes(x, y, smooth_slopes=False):
         return np.array([])
     elif len(x) == 1:
         return np.array([0.0])
-    y_octaves = np.log2(y)  # calculation for difference wil be same in Hz or kHz, so no need to convert
+
+    if not np.any(y):
+        y_octaves = y
+    else:
+        # calculation for difference wil be same in Hz or kHz, so no need to convert
+        y_octaves = np.log2(y)
+        y_octaves[np.isnan(y_octaves)] = 0.0
     slopes = np.diff(y_octaves) / np.diff(x)
-    slopes = np.append(slopes, slopes[-1])  # FIXME: hack for final dot
+    slopes = np.append(slopes, slopes[-1])  # FIXME: hack for final dot (instead merge slope(signal[1:]) and slope(signal[:-1])
     slopes = -1 * slopes  # Analook inverts slope so we do also
     log.debug('Smax: %.1f OPS   Smin: %.1f OPS', np.amax(slopes) or -9999, np.amin(slopes) or -9999)
     slopes[slopes < -5000] = 0.0  # super-steep is probably noise or a new pulse
     slopes[slopes > 10000] = 0.0  # TODO: refine these magic boundary values!
+    slopes[np.isnan(slopes)] = 0.0
+
     if smooth_slopes:
-        log.info('BEFORE smoothing')
-        log.info('  ndim=%s shape=%s size=%s dtype=%s itemsize=%s NaN=%s', slopes.ndim, slopes.shape, slopes.size, slopes.dtype, slopes.itemsize, np.count_nonzero(np.isnan(slopes)))
-        slopes = smooth(slopes)
-        log.info('AFTER smoothing')
-        log.info('  ndim=%s shape=%s size=%s dtype=%s itemsize=%s NaN=%s', slopes.ndim, slopes.shape, slopes.size, slopes.dtype, slopes.itemsize, np.count_nonzero(np.isnan(slopes)))
         # FIXME: rather than smoothing after the fact, can we simply calculate slope initially across every 2nd element?
+        slopes = smooth(slopes)
+
     return slopes
 
 
 class ZeroCrossPlotPanel(PlotPanel):
 
-    SLOPE_MAX = 750  # highest slope value (oct/sec) of our color scale; TODO: make scale log-based?
+    SLOPE_MAX = 1000  #750  # highest slope value (oct/sec) of our color scale; TODO: make scale log-based?
+    SLOPE_MIN = 0  #-SLOPE_MAX
 
-    config = {
+    config = {  # DEFAULTS
         'freqminmax': (15, 100),   # min and max frequency to display KHz
         'scale': 'linear',         # linear | log
         'markers': (25, 40),       # reference lines kHz
-        'filter_markers': (20.0,), # reference lines kHz
+        'filter_markers': (20.0,), # filter lines kHz
         'compressed': False,       # compressed view (True) or realtime (False)
         'smooth_slopes': True,     # smooth out noisy slope values
+        'interpolate': True,       # interpolate between WAV samples
         'display_cursor': False,   # display horiz and vert cursor lines
         'colormap': 'jet',         # named color map
+        'dot_sizes': (40, 20, 2),  # dot display sizes in points (max, default, min)
         'harmonics': {'0.5': False, '1': True, '2': False, '3': False},
     }
 
-    def __init__(self, parent, times, freqs, config=None, **kwargs):
+    def __init__(self, parent, times, freqs, amplitudes, config=None, **kwargs):
         self.times = times if len(times) else np.array([0.0])
         self.freqs = freqs if len(freqs) else np.array([0.0])
+        dot_max, dot_default, dot_min = self.config['dot_sizes']
+        if amplitudes is not None:
+            self.amplitudes = amplitudes if len(amplitudes) else np.array([0.0])
+            # normalize amplitude values to display point size
+            log.debug(' orig. amp  max: %.1f  min: %.1f', np.max(self.amplitudes), np.min(self.amplitudes))
+            self.scaled_amplitudes = (amplitudes / np.amax(self.amplitudes)) * (dot_max - dot_min) + dot_min
+            log.debug('scaled amp  max: %.1f  min: %.1f', np.max(self.scaled_amplitudes) if len(self.scaled_amplitudes) else 0.0, np.min(self.scaled_amplitudes) if len(self.scaled_amplitudes) else 0.0)
+        else:
+            self.amplitudes = np.ones(len(freqs), dtype=np.int8)
+            self.scaled_amplitudes = np.full(len(freqs), dot_default, dtype=np.int8)
 
         self.name = kwargs.get('name', '')
         if config:
             self.config.update(config)
 
         self.slopes = slopes(self.times, self.freqs, smooth_slopes=self.config['smooth_slopes'])
-        self.freqs = self.freqs / 1000  # convert Hz to KHz
+        self.freqs = self.freqs / 1000  # convert Hz to KHz  (the /= operator doesn't work here?!)
 
         PlotPanel.__init__(self, parent, **kwargs)
 
         self.SetColor((0xff, 0xff, 0xff))
 
+    @print_timing
     def draw(self):
         # TODO: recycle the figure with `self.fig.clear()` rather than creating new panel and figure each refresh!
 
@@ -866,28 +910,36 @@ class ZeroCrossPlotPanel(PlotPanel):
         self.dot_plot = self.figure.add_subplot(gs[0])
 
         miny, maxy = self.config['freqminmax']
-        plot_kwargs = dict(cmap=self.config['colormap'], vmin=0, vmax=self.SLOPE_MAX, linewidths=0.0)  # vmin/vmax define where we scale our colormap
+        plot_kwargs = dict(cmap=self.config['colormap'],
+                           vmin=self.SLOPE_MIN, vmax=self.SLOPE_MAX,  # vmin/vmax define where we scale our colormap
+                           c=self.slopes, s=self.scaled_amplitudes,   # dot color and size
+                           linewidths=0.0,
+                           )
         # TODO: neither of these are proper compressed or non-compressed views!
         if len(self.freqs) < 2:
             dot_scatter = self.dot_plot.scatter([], [])  # empty set
         elif self.config['compressed']:
-            dot_scatter = self.dot_plot.scatter(self.times, self.freqs, c=self.slopes, **plot_kwargs)
+            dot_scatter = self.dot_plot.scatter(self.times, self.freqs, **plot_kwargs)
             self.dot_plot.set_xlim(self.times[0], self.times[-1])
             self.dot_plot.set_xlabel('Time (sec)')
         else:
             x = range(len(self.freqs))
             if self.config['harmonics']['0.5']:
-                dot_scatter_h05 = self.dot_plot.scatter(x, self.freqs/2, c=self.slopes, alpha=0.2, **plot_kwargs)
+                dot_scatter_h05 = self.dot_plot.scatter(x, self.freqs/2, alpha=0.2, **plot_kwargs)
             if self.config['harmonics']['2']:
-                dot_scatter_h2 = self.dot_plot.scatter(x, self.freqs*2, c=self.slopes, alpha=0.2, **plot_kwargs)
+                dot_scatter_h2 = self.dot_plot.scatter(x, self.freqs*2, alpha=0.2, **plot_kwargs)
             if self.config['harmonics']['3']:
-                dot_scatter_h3 = self.dot_plot.scatter(x, self.freqs*3, c=self.slopes, alpha=0.2, **plot_kwargs)
-            dot_scatter = self.dot_plot.scatter(x, self.freqs, c=self.slopes, **plot_kwargs)
+                dot_scatter_h3 = self.dot_plot.scatter(x, self.freqs*3, alpha=0.2, **plot_kwargs)
+            dot_scatter = self.dot_plot.scatter(x, self.freqs, **plot_kwargs)
             self.dot_plot.set_xlim(0, len(x))
             self.dot_plot.set_xlabel('Dot Count')
 
         self.dot_plot.set_title(self.name)
-        self.dot_plot.set_yscale(self.config['scale'])
+        try:
+            self.dot_plot.set_yscale(self.config['scale'])  # FIXME: fails with "Data has no positive values" error
+        except ValueError:
+            log.exception('Failed setting log scale (exception caught)')
+            log.error('\ntimes: %s\nfreqs: %s\nslopes: %s', self.times, self.freqs, self.slopes)
         self.dot_plot.set_ylim(miny, maxy)
         self.dot_plot.set_ylabel('Frequency (KHz)')
 
@@ -929,7 +981,7 @@ class ZeroCrossPlotPanel(PlotPanel):
         except TypeError, e:
             # colorbar() blows up on empty set
             sm = ScalarMappable(cmap=self.config['colormap'])  # TODO: this should probably share colormap code with histogram
-            sm.set_array(np.array([0, self.SLOPE_MAX]))
+            sm.set_array(np.array([self.SLOPE_MIN, self.SLOPE_MAX]))
             cbar = self.figure.colorbar(sm, cax=cbar_plot, ticks=[])
         cbar.ax.set_yticklabels([])
 
@@ -938,9 +990,8 @@ class ZeroCrossPlotPanel(PlotPanel):
         hist_plot = self.figure.add_subplot(gs[2])
         hist_plot.set_title('Freqs')
 
-        #bins = int(round((maxy - miny) / 2.5))  # TODO: this should probably just be fixed at some size, eg. 2.5khz
         bin_min, bin_max = self.config['freqminmax']
-        bin_size = 2  # khz
+        bin_size = 2  # khz  # TODO: make this configurable
         bin_n = int((bin_max - bin_min) / bin_size)
         n, bins, patches = hist_plot.hist(self.freqs, orientation='horizontal', range=self.config['freqminmax'], bins=bin_n)
         hist_plot.set_yscale(self.config['scale'])
@@ -948,7 +999,7 @@ class ZeroCrossPlotPanel(PlotPanel):
         hist_plot.get_yaxis().set_major_formatter(matplotlib.ticker.ScalarFormatter())
 
         # color histogram bins
-        cmap = ScalarMappable(cmap=self.config['colormap'], norm=Normalize(vmin=0, vmax=self.SLOPE_MAX))  # TODO: magic slope upper limit
+        cmap = ScalarMappable(cmap=self.config['colormap'], norm=Normalize(vmin=self.SLOPE_MIN, vmax=self.SLOPE_MAX))  # TODO: magic slope upper limit
         for bin_start, bin_end, patch in zip(bins[:-1], bins[1:], patches):
             bin_slopes = self.slopes[(bin_start <= self.freqs) & (self.freqs < bin_end)]
             avg_slope = np.median(bin_slopes) if bin_slopes.any() else 0

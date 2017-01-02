@@ -39,7 +39,7 @@ def hpf_zc(times_s, freqs_hz, cutoff_freq_hz):
 
 @print_timing
 def extract_anabat(fname, hpfilter_khz=8.0):
-    """Extract (times, frequencies, metadata) from Anabat sequence file"""
+    """Extract (times, frequencies, amplitudes, metadata) from Anabat sequence file"""
     with open(fname, 'rb') as f, contextlib.closing(mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)) as m:
         size = len(m)
 
@@ -131,7 +131,7 @@ def extract_anabat(fname, hpfilter_khz=8.0):
 
     times_s, freqs_hz = hpf_zc(times_s, freqs_hz, hpfilter_khz*1000)
 
-    return times_s, freqs_hz, metadata
+    return times_s, freqs_hz, None, metadata
 
 
 def anabat_filename(timestamp):
