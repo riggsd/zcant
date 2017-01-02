@@ -898,7 +898,7 @@ class ZeroCrossPlotPanel(PlotPanel):
 
         PlotPanel.__init__(self, parent, **kwargs)
 
-        self.SetColor((0xff, 0xff, 0xff))
+        self.SetColor((0xF0, 0xF0, 0xF0))  # outside border color
 
     @print_timing
     def draw(self):
