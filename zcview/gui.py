@@ -71,6 +71,9 @@ def beep():
 
 class ZCViewMainFrame(wx.Frame):
 
+    WAV_THRESHOLD_DELTA = 0.25  # RMS ratio
+    HPF_DELTA = 2.5             # kHz
+
     def __init__(self, parent, title='Myotisoft ZCView 0.1a'):
         wx.Frame.__init__(self, parent, title=title, size=(640,480))
 
@@ -519,7 +522,7 @@ class ZCViewMainFrame(wx.Frame):
             return wav2zc(path, divratio=self.wav_divratio,
                           threshold_factor=self.wav_threshold,
                           hpfilter_khz=self.hpfilter,
-                          interpolate=self.wav_interpolation)
+                          interpolation=self.wav_interpolation)
         else:
             raise Exception('Unknown file type: %s', path)
 
@@ -692,29 +695,29 @@ class ZCViewMainFrame(wx.Frame):
         self.save_conf()
 
     def on_threshold_up(self, event):
-        self.wav_threshold += 0.25
+        self.wav_threshold += self.WAV_THRESHOLD_DELTA
         log.debug('increasing threshold to %.1f x RMS', self.wav_threshold)
         self.load_file(self.dirname, self.filename)
         self.save_conf()
 
     def on_threshold_down(self, event):
-        if self.wav_threshold < 0.25:
+        if self.wav_threshold < self.WAV_THRESHOLD_DELTA:
             return
-        self.wav_threshold -= 0.25
+        self.wav_threshold -= self.WAV_THRESHOLD_DELTA
         log.debug('decreasing threshold to %.1f x RMS', self.wav_threshold)
         self.load_file(self.dirname, self.filename)
         self.save_conf()
 
     def on_hpfilter_up(self, event):
-        self.hpfilter += 2.5
+        self.hpfilter += self.HPF_DELTA
         log.debug('increasing high-pass filter to %.1f KHz', self.hpfilter)
         self.load_file(self.dirname, self.filename)
         self.save_conf()
 
     def on_hpfilter_down(self, event):
-        if self.hpfilter < 2.5:
+        if self.hpfilter < self.HPF_DELTA:
             return
-        self.hpfilter -= 2.5
+        self.hpfilter -= self.HPF_DELTA
         log.debug('decreasing high-pass filter to %.1f KHz', self.hpfilter)
         self.load_file(self.dirname, self.filename)
         self.save_conf()
@@ -871,7 +874,7 @@ class ZeroCrossPlotPanel(PlotPanel):
         'interpolate': True,       # interpolate between WAV samples
         'display_cursor': False,   # display horiz and vert cursor lines
         'colormap': 'jet',         # named color map
-        'dot_sizes': (40, 20, 2),  # dot display sizes in points (max, default, min)
+        'dot_sizes': (40, 12, 2),  # dot display sizes in points (max, default, min)
         'harmonics': {'0.5': False, '1': True, '2': False, '3': False},
     }
 
@@ -1008,7 +1011,7 @@ class ZeroCrossPlotPanel(PlotPanel):
         hist_plot.get_yaxis().set_major_formatter(matplotlib.ticker.ScalarFormatter())
 
         # color histogram bins
-        cmap = ScalarMappable(cmap=self.config['colormap'], norm=Normalize(vmin=self.SLOPE_MIN, vmax=self.SLOPE_MAX))  # TODO: magic slope upper limit
+        cmap = ScalarMappable(cmap=self.config['colormap'], norm=Normalize(vmin=self.SLOPE_MIN, vmax=self.SLOPE_MAX))
         for bin_start, bin_end, patch in zip(bins[:-1], bins[1:], patches):
             bin_mask = (bin_start <= self.freqs) & (self.freqs < bin_end)
             bin_slopes = self.slopes[bin_mask]

@@ -2,16 +2,13 @@
 Refactored ZCANT algorithm for conversion of .WAV to generic zero-crossing data
 """
 
-#
-# TODO: consider interpolating zero-cross values for increased accuracy
-# https://gist.github.com/255291
-#
 
 from __future__ import division
 
 import io
 import sys
 import wave
+import math
 import struct
 import os.path
 import re
@@ -100,23 +97,77 @@ def highpassfilter(signal, samplerate, cutoff_freq_hz, filter_order=6):
 
 
 @print_timing
-def noise_gate(signal, threshold_factor):
-    """Discard low-amplitude portions of the signal.
+def noise_gate_zc(times_s, freqs_hz, amplitudes, threshold_factor):
+    """Discard low-amplitude portions of the zero-cross signal.
     threshold_factor: ratio of root-mean-square "noise floor" below which we drop
     """
-    signal_rms = rms(signal)
+    signal_rms = rms(amplitudes)
     threshold = threshold_factor * signal_rms
-    log.debug('RMS: %.1f  threshold: %0.1f (%.1f x RMS)' % (signal_rms, threshold, threshold_factor))
-    # ignore everything below threshold amplitude (and convert whole signal to DC!)
-    signal[signal < threshold] = 0
+    log.debug('RMS: %.1f  threshold: %0.1f (%.1f x RMS)', signal_rms, threshold, threshold_factor)
+    # ignore everything below threshold amplitude
+    mask = amplitudes >= threshold
+    return times_s[mask], freqs_hz[mask], amplitudes[mask]
 
-    # experimental alternate method: shrink everything toward zero (broken!)
-    #signal[np.logical_and(threshold > signal, signal > 0.0)] = 0.0
-    #signal[signal >= threshold] -= threshold
-    #signal[np.logical_and(-threshold < signal, signal < 0.0)] = 0
-    #signal[signal <= -threshold] += threshold
 
-    return signal
+# @print_timing
+# def noise_gate(signal, threshold_factor):
+#     """Discard low-amplitude portions of the signal.
+#     threshold_factor: ratio of root-mean-square "noise floor" below which we drop
+#     """
+#     signal_rms = rms(signal)
+#     threshold = threshold_factor * signal_rms
+#     log.debug('RMS: %.1f  threshold: %0.1f (%.1f x RMS)', signal_rms, threshold, threshold_factor)
+#     # ignore everything below threshold amplitude (and convert whole signal to DC!)
+#     signal[signal < threshold] = 0
+#     return signal
+
+
+# def ms_to_samples(samplerate, ms):
+#     """
+#     Given a samplerate and a time span in milliseconds, calculate the number of samples required
+#     to cover that time span
+#     :param samplerate: samplerate in Hz
+#     :param ms: time in milliseconds
+#     :return: integer number of samples
+#     """
+#     return int(math.ceil(ms * samplerate / 1000.0))
+#
+# def pad_widths(N):
+#     """Given a window size N, produce (front, rear) sizes require to pad back to original length"""
+#     if not N:
+#         raise ValueError(N)
+#     N -= 1
+#     return N // 2, N // 2 + N % 2
+#
+# def rolling_mean(signal, N):
+#     """
+#     Calculate the rolling mean of a signal, with window size N.
+#     Front and rear of the output are padded with un-averaged signal values so that output size == input size
+#     """
+#     if not N:
+#         raise ValueError(N)
+#     elif N == 1:
+#         return signal
+#     cumsum = np.cumsum(np.insert(signal, 0, 0), dtype=np.float64)
+#     mean = (cumsum[N:] - cumsum[:-N]) / N  # size len(signal) - N - 1
+#     front, rear = pad_widths(N)
+#     return np.append(np.insert(mean, 0, signal[:front]), signal[-rear:])
+#
+# @print_timing
+# def noise_gate_ROLLING_MEAN(signal, samplerate, threshold_factor, window_size_ms=0.1):
+#     """Discard low-amplitude portions of the signal.
+#     threshold_factor: ratio of root-mean-square "noise floor" below which we drop
+#     """
+#     window_size = ms_to_samples(samplerate, window_size_ms)
+#     signal_rms = rms(signal)
+#     threshold = threshold_factor * signal_rms
+#     log.debug('RMS: %.1f  threshold: %0.1f (%.1f x RMS)', signal_rms, threshold, threshold_factor)
+#     mean_signal = rolling_mean(signal, window_size)
+#     if len(mean_signal) != len(signal):
+#         raise Exception('Rolling mean size is incorrect (mean %d vs original %d)' % (len(mean_signal), len(signal)))
+#     output = signal.copy()
+#     output[np.logical_and(mean_signal < threshold, output < threshold)] = 0  # NOTE: this converts signal to DC!
+#     return output
 
 
 @print_timing
@@ -139,13 +190,14 @@ def interpolate(signal, crossings):
     # casts are unnecessary, but a few of them are critical for accuracy given our nano-second
     # scale.
 
-    #interpolated_crossings = []
-    #for i in crossings:
-    #    a, b = np.int64(signal[i]), np.int64(signal[i+1])
-    #    ra = b / np.float64(a - b)
-    #    rb = a / np.float64(a - b)
-    #    interpolated_crossings.append(i+rb)
-    #crossings = np.array(interpolated_crossings, dtype=np.float64)
+    # interpolated_crossings = []
+    # for i in crossings:
+    #     a = np.int64(signal[i])
+    #     b = np.int64(signal[i+1])
+    #     ra = b / np.float64(a - b)
+    #     rb = a / np.float64(a - b)
+    #     interpolated_crossings.append(i + rb)
+    # crossings = np.array(interpolated_crossings, dtype=np.float64)
 
     # FIXME: This is slow, and should ideally be performed entirely within numpy
     # FIXME: noise_gate has significant influence (instead of i+1, interpolate to next non-zero value?)
@@ -156,7 +208,6 @@ def interpolate(signal, crossings):
 @print_timing
 def zero_cross(signal, samplerate, divratio, amplitudes=True, interpolation=False):
     """Produce (times in seconds, frequencies in Hz, and amplitudes) from calculated zero crossings"""
-    # straight zero-cross without any samplerate interpolation
     log.debug('zero_cross2(..., %d, %d, amplitudes=%s, interpolation=%s)', samplerate, divratio, amplitudes, interpolation)
     divratio /= 2  # required so that our algorithm agrees with the Anabat ZCAIM algorithm
 
@@ -176,6 +227,7 @@ def zero_cross(signal, samplerate, divratio, amplitudes=True, interpolation=Fals
     intervals_s = np.ediff1d(times_s, to_end=0)  # TODO: benchmark, `diff` may be faster than `ediff1d` (but figure out if the 0 appended to end is necessary?)
     freqs_hz = 1.0 / intervals_s * divratio
     freqs_hz[np.isinf(freqs_hz)] = 0  # fix divide-by-zero
+
     # if not np.all(freqs_hz):
     #     bad_crossings = np.where(freqs_hz == 0.0)
     #     log.debug('Discarding %d bad crossings of 0Hz', len(bad_crossings))
@@ -187,6 +239,7 @@ def zero_cross(signal, samplerate, divratio, amplitudes=True, interpolation=Fals
     # else:
     #     log.debug('No bad crossings!')
     #     log.debug(freqs_hz)
+
     return times_s, freqs_hz, amplitudes
 
 
@@ -199,12 +252,28 @@ def hpf_zc(times_s, freqs_hz, amplitudes, cutoff_freq_hz):
     return times_s[hpf_mask], freqs_hz[hpf_mask], amplitudes[hpf_mask] if amplitudes is not None else None
 
 
+# @print_timing
+# def resample(samplerate, signal, target_samplerate=768000):
+#     """Resample a full-spectrum signal to a higher samplerate - warning: too slow"""
+#     if samplerate >= target_samplerate:
+#         return samplerate, signal
+#     new_length = 2 * len(signal)  #int(round(target_samplerate * len(signal) / samplerate))  # SLLOOOOOOOW.
+#     signal = scipy.signal.resample(signal, new_length)
+#     return target_samplerate, signal
+
+
 @print_timing
-def wav2zc(fname, divratio=8, hpfilter_khz=20, threshold_factor=1.0, interpolate=False, brickwall_hpf=True):
+def wav2zc(fname, divratio=8, hpfilter_khz=20, threshold_factor=1.0, interpolation=False, brickwall_hpf=True):
     """Convert a single .wav file to Anabat format.
     Produces (times in seconds, frequencies in Hz, amplitudes, metadata).
 
-    signal -> HPF -> noise gate -> ZC -> brickwall HPF
+    Processing pipeline:
+        signal -> HPF -> ZC w. interpolation -> brickwall HPF -> noise gate
+
+    (We formerly applied noise gate to the full-spectrum signal, but that makes sample
+    interpolation impossible(?). Zero-crossing without noise gate is slow, and slows down
+    everything later in the pipeline... TODO: investigate other ways to clean up the signal
+    prior to zero-crossing.)
 
     fname: input filename
     divratio: ZCAIM frequency division ratio (4, 8, 10, 16, or 32)
@@ -214,15 +283,15 @@ def wav2zc(fname, divratio=8, hpfilter_khz=20, threshold_factor=1.0, interpolate
     brickwall_hpf: whether we should throw out all dots which fall below our HPF threshold
     """
 
-    log.debug('wav2zc(infile=%s, divratio=%d, hpf=%.1fKHz, threshold=%.1fxRMS, interpolate=%s)', fname, divratio, hpfilter_khz, threshold_factor, interpolate)
-
-    # check params
+    log.debug('wav2zc(infile=%s, divratio=%d, hpf=%.1fKHz, threshold=%.1fxRMS, interpolate=%s)', fname, divratio, hpfilter_khz, threshold_factor, interpolation)
+    do_hpfilter = hpfilter_khz is not None and not np.isclose(hpfilter_khz, 0.0)
+    do_noise_gate = threshold_factor is not None and not np.isclose(threshold_factor, 0.0)
     if divratio not in (4, 8, 10, 16, 32):
         raise Exception('Unsupported divratio: %s (Anabat132 supports 4, 8, 10, 16, 32)' % divratio)
 
     samplerate, signal = load_wav(fname)
 
-    if hpfilter_khz:
+    if do_hpfilter:
         signal = highpassfilter(signal, samplerate, hpfilter_khz*1000)
     else:
         # HPF removes DC offset, so we manually remove it when not filtering
@@ -230,12 +299,12 @@ def wav2zc(fname, divratio=8, hpfilter_khz=20, threshold_factor=1.0, interpolate
         signal = dc_offset(signal)
         log.debug('DC offset after:  %.1f', np.sum(signal) / len(signal))
 
-    if threshold_factor:
-        signal = noise_gate(signal, threshold_factor)  # TODO: is it OK that we're converting AC signal to DC here?
-
-    times_s, freqs_hz, amplitudes = zero_cross(signal, samplerate, divratio, interpolation=interpolate)
-    if brickwall_hpf and hpfilter_khz:
+    times_s, freqs_hz, amplitudes = zero_cross(signal, samplerate, divratio, interpolation=interpolation)
+    if brickwall_hpf and do_hpfilter:
         times_s, freqs_hz, amplitudes = hpf_zc(times_s, freqs_hz, amplitudes, hpfilter_khz*1000)
+    if do_noise_gate:
+        log.debug('threshold_factor: %f  bool: %s  isclose: %s', threshold_factor, bool(threshold_factor), np.isclose(threshold_factor, 0.0))
+        times_s, freqs_hz, amplitudes = noise_gate_zc(times_s, freqs_hz, amplitudes, threshold_factor)
 
     if len(freqs_hz) > 16384:  # Anabat file format max dots
         log.warn('File exceeds max dotcount (%d)! Consider raising DivRatio?', len(freqs_hz))
@@ -251,26 +320,10 @@ def wav2zc(fname, divratio=8, hpfilter_khz=20, threshold_factor=1.0, interpolate
 TIMESTAMP_REGEX = re.compile(r'(\d{8}_\d{6})')
 
 def extract_timestamp(fname):
+    """Extract the timestamp from a file."""
     # For now we simply yank from the filename itself, no proper metadata support
     try:
         timestamp = TIMESTAMP_REGEX.search(fname).groups()[0]
         return datetime.strptime(timestamp, '%Y%m%d_%H%M%S')
     except:
         return None
-
-
-def _main(fname):
-    logging.basicConfig(level=logging.DEBUG, format='%(asctime)s\t%(levelname)s\t%(message)s')
-    #for fname in sys.argv[1:]:
-    #	print fname
-    #	print AnabatMetadata(fname)
-    start_time = time.time()
-    outfname = fname.rsplit('.',1)[0] + '.00#'
-    wav2zc(fname)
-    now = time.time()
-    log.debug('Conversion time: %.2fs', now - start_time)
-
-
-if __name__ == '__main__':
-    import sys
-    _main(sys.argv[1])
