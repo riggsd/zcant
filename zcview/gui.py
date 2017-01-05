@@ -1,10 +1,12 @@
 """
-ZCView GUI
+ZCANT main GUI code.
+
+---------------
+Myotisoft ZCANT
+Copyright (C) 2012-2017 Myotisoft LLC, all rights reserved.
+You may use, distribute, and modify this code under the terms of the MIT License.
 """
 
-# See: http://wiki.scipy.org/Cookbook/Matplotlib/EmbeddingInWx
-#
-#
 
 from __future__ import division
 
@@ -74,7 +76,7 @@ class ZCViewMainFrame(wx.Frame):
     WAV_THRESHOLD_DELTA = 0.25  # RMS ratio
     HPF_DELTA = 2.5             # kHz
 
-    def __init__(self, parent, title='Myotisoft ZCView 0.1a'):
+    def __init__(self, parent, title='Myotisoft ZCANT 0.1a'):
         wx.Frame.__init__(self, parent, title=title, size=(640,480))
 
         # Application State - set initial defaults, then read state from conf file

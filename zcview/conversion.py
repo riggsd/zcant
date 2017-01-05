@@ -1,5 +1,10 @@
 """
-Refactored ZCANT algorithm for conversion of .WAV to generic zero-crossing data
+Algorithm for conversion of .WAV audio to zero-crossing signal.
+
+---------------
+Myotisoft ZCANT
+Copyright (C) 2012-2017 Myotisoft LLC, all rights reserved.
+You may use, distribute, and modify this code under the terms of the MIT License.
 """
 
 

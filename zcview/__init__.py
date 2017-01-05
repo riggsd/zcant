@@ -1,3 +1,11 @@
+"""
+Misc. package-level utilities.
+
+---------------
+Myotisoft ZCANT
+Copyright (C) 2012-2017 Myotisoft LLC, all rights reserved.
+You may use, distribute, and modify this code under the terms of the MIT License.
+"""
 
 import time
 import logging

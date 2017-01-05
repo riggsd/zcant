@@ -1,3 +1,12 @@
+"""
+Module for reading/writing the Anabat file format, as well as general zero-crossing routines.
+
+---------------
+Myotisoft ZCANT
+Copyright (C) 2012-2017 Myotisoft LLC, all rights reserved.
+You may use, distribute, and modify this code under the terms of the MIT License.
+"""
+
 import io
 import mmap
 import struct
@@ -13,6 +22,7 @@ from zcview import print_timing
 
 import logging
 log = logging.getLogger(__name__)
+
 
 Byte = struct.Struct('< B')
 
