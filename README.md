@@ -94,6 +94,5 @@ get you up and running:
   blue line. (Default is 17.5kHz, which will mask the occurance of some low-frequency North
   American bats.)
  
- 
  * Use `CMD+s` to save an Anabat-format file, or `CMD-p` to "print" a screenshot image in .PNG format.
  
