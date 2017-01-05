@@ -1,4 +1,4 @@
-= Myotisoft ZCANT
+# Myotisoft ZCANT
 
 ZCANT is a tool for analyzing bat echolocation calls. Specifically, it extracts the echolocation
 signal using the zero-crossing technique pioneered by Chris Corben, with a few modern twists:
@@ -13,10 +13,10 @@ signal using the zero-crossing technique pioneered by Chris Corben, with a few m
   into the display visually as color. You'll soon develop a synesthesia that lets you see the shape
   of a call by its colors.
 
-![ZCANT Screenshot](/docs/images/zcan_screenshot.png?raw=true "ZCANT Screenshot")
+![ZCANT Screenshot](/docs/images/zcant_screenshot.png?raw=true "ZCANT Screenshot")
 
 
-== License
+## License
 
 ZCANT is Free / Open Source Software, cross-platform, and written in the Python programming
 language. It can serve as the base for your own bat acoustics software projects! See the file
@@ -25,7 +25,7 @@ language. It can serve as the base for your own bat acoustics software projects!
 Copyright (C) 2012-2017 by Myotisoft LLC <http://myotisoft.com>
 
 
-== Requirements
+## Requirements
 
 - Python 2.7
 - NumPy
@@ -34,11 +34,11 @@ Copyright (C) 2012-2017 by Myotisoft LLC <http://myotisoft.com>
 - WxPython 3.0
 
 
-== Building
+## Building
 
 Install wxPython 3.0.1.1. See: https://wiki.wxpython.org/How%20to%20install%20wxPython
 
-pip -r requirements.txt
+    $> pip -r requirements.txt
 
-python ZCView.py
+    $> python zcant.py
 
