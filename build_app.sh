@@ -15,14 +15,14 @@ echo "before stripping"
 du -h -d 1 dist
 
 #for FRAMEWORK in $FRAMEWORK_EXCLUDES; do
-#    rm -rf dist/ZCView.app/Contents/Frameworks/${FRAMEWORK}.framework
+#    rm -rf dist/zcant.app/Contents/Frameworks/${FRAMEWORK}.framework
 #done
 
 JUNK="tests doc docs"
 for DIR in $JUNK; do
-    find dist/ZCView.app/Contents/Resources/lib/python2.7/ -name $DIR | xargs rm -rf
+    find dist/zcant.app/Contents/Resources/lib/python2.7/ -name $DIR | xargs rm -rf
 done
-rm -rf dist/ZCView.app/Contents/Resources/mpl-data/sample_data
+rm -rf dist/zcant.app/Contents/Resources/mpl-data/sample_data
 
 echo "after stripping"
 du -h -d 1 dist

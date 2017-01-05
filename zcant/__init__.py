@@ -12,6 +12,9 @@ import logging
 log = logging.getLogger(__name__)
 
 
+__version__ = '0.1a'
+
+
 def print_timing(func):
     """Debug decorator for logging the time in milliseconds a function takes to execute"""
     def wrapper(*args, **kwargs):

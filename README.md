@@ -31,6 +31,7 @@ Copyright (C) 2012-2017 by Myotisoft LLC <http://myotisoft.com>
 - NumPy
 - SciPy
 - MatPlotLib
+- WxPython 3.0
 
 
 == Building

@@ -18,7 +18,7 @@ from datetime import datetime
 
 import numpy as np
 
-from zcview import print_timing
+from zcant import print_timing
 
 import logging
 log = logging.getLogger(__name__)

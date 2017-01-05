@@ -13,17 +13,14 @@ import logging
 
 import wx
 
-from zcview.gui import ZCViewMainFrame
-
-
-__version__ = '0.1a'
+from zcant.gui import ZcantMainFrame
 
 
 def main():
     logging.basicConfig(level=logging.DEBUG, format='%(asctime)s\t%(levelname)s\t%(message)s')
 
     app = wx.App(False)
-    frame = ZCViewMainFrame(None)
+    frame = ZcantMainFrame(None)
     frame.Maximize(True)
     frame.Show(True)
     app.MainLoop()

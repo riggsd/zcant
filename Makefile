@@ -1,7 +1,7 @@
 
 PYTHON=python
 
-VERSION = $(shell grep __version__ ZCView.py | cut -d "'" -f 2)
+VERSION = $(shell grep __version__ zcant.py | cut -d "'" -f 2)
 
 all: clean build
 
@@ -15,7 +15,7 @@ test:
 	$(PYTHON) -m unittest discover -v -s unittests
 
 pep8:
-	pep8 --max-line-length=120 zcview
+	pep8 --max-line-length=120 zcant
 
 pylint:
-	pylint -f colorized --errors-only zcview
+	pylint -f colorized --errors-only zcant

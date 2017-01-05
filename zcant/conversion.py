@@ -25,7 +25,7 @@ import scipy.signal
 import logging
 log = logging.getLogger(__name__)
 
-from zcview import print_timing
+from zcant import print_timing
 
 
 __all__ = 'wav2zc'

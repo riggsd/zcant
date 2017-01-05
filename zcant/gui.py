@@ -32,9 +32,10 @@ from matplotlib.cm import get_cmap, ScalarMappable
 from matplotlib.colors import Normalize
 from matplotlib.widgets import Cursor, RectangleSelector
 
-from zcview import print_timing
-from zcview.anabat import extract_anabat, AnabatFileWriter
-from zcview.conversion import wav2zc
+from zcant import __version__
+from zcant import print_timing
+from zcant.anabat import extract_anabat, AnabatFileWriter
+from zcant.conversion import wav2zc
 
 import logging
 log = logging.getLogger(__name__)
@@ -43,7 +44,7 @@ log = logging.getLogger(__name__)
 np.seterr(all='warn')  # switch to 'raise' and NumPy will fail fast on calculation errors
 
 
-CONF_FNAME = os.path.expanduser('~/.myotisoft/zcview.ini')
+CONF_FNAME = os.path.expanduser('~/.myotisoft/zcant.ini')
 
 
 CMAP_SEQ  = ['Blues', 'BuGn', 'BuPu', 'GnBu', 'Greens', 'Greys', 'Oranges', 'OrRd', 'PuBu', 'PuBuGn', 'PuRd', 'Purples', 'RdPu', 'Reds', 'YlGn', 'YlGnBu', 'YlOrBr', 'YlOrRd']
@@ -71,12 +72,12 @@ def beep():
     sys.stdout.flush()
 
 
-class ZCViewMainFrame(wx.Frame):
+class ZcantMainFrame(wx.Frame):
 
     WAV_THRESHOLD_DELTA = 0.25  # RMS ratio
     HPF_DELTA = 2.5             # kHz
 
-    def __init__(self, parent, title='Myotisoft ZCANT 0.1a'):
+    def __init__(self, parent, title='Myotisoft ZCANT '+__version__):
         wx.Frame.__init__(self, parent, title=title, size=(640,480))
 
         # Application State - set initial defaults, then read state from conf file
@@ -336,7 +337,7 @@ class ZCViewMainFrame(wx.Frame):
         log.debug('Saving %s ...', outpath)
 
         with AnabatFileWriter(outpath) as out:
-            out.write_header(timestamp, self.wav_divratio, species='', note1='Myotisoft ZCView', note2='')  # TODO
+            out.write_header(timestamp, self.wav_divratio, species='', note1='Myotisoft ZCANT', note2='')  # TODO
             time_indexes_us = self._times * 1000000
             intervals_us = np.diff(time_indexes_us)
             intervals_us = intervals_us.astype(int)  # TODO: round before int cast; consider casting before diff for performance
@@ -344,7 +345,7 @@ class ZCViewMainFrame(wx.Frame):
 
     def on_about(self, event):
         log.debug('about: %s', event)
-        dlg = wx.MessageDialog(self, 'A boring Zero-Cross Viewer!', 'About ZCView', wx.OK)
+        dlg = wx.MessageDialog(self, 'A boring Zero-Cross Viewer!', 'About ZCANT', wx.OK)
         dlg.ShowModal()
         dlg.Destroy()
 
