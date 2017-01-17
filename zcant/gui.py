@@ -894,7 +894,7 @@ def smooth(slopes):
 
 
 @print_timing
-def slopes(x, y, smooth_slopes=False):
+def slopes(x, y, smooth_slopes=False, max_slope=5000):
     """
     Produce an array of slope values in octaves per second.
     We very, very crudely try to compensate for the jump between pulses, but don't deal well with noise.
@@ -915,10 +915,9 @@ def slopes(x, y, smooth_slopes=False):
         y_octaves[np.isnan(y_octaves)] = 0.0
     slopes = np.diff(y_octaves) / np.diff(x)
     slopes = np.append(slopes, slopes[-1])  # FIXME: hack for final dot (instead merge slope(signal[1:]) and slope(signal[:-1])
-    slopes = -1 * slopes  # Analook inverts slope so we do also
-    log.debug('Smax: %.1f OPS   Smin: %.1f OPS', np.amax(slopes) or -9999, np.amin(slopes) or -9999)
-    slopes[slopes < -5000] = 0.0  # super-steep is probably noise or a new pulse
-    slopes[slopes > 10000] = 0.0  # TODO: refine these magic boundary values!
+    slopes = np.abs(slopes)  # Analook inverts slope so we do also (but should we keep the distinction between positive and negative slopes??)
+    log.debug('Smax: %.1f OPS   Smin: %.1f OPS', np.amax(slopes), np.amin(slopes))
+    slopes[slopes > 5000] = 0.0  # super-steep is probably noise or a new pulse
     slopes[np.isnan(slopes)] = 0.0
 
     if smooth_slopes:
@@ -958,8 +957,8 @@ class ZeroCrossPlotPanel(PlotPanel):
             self.scaled_amplitudes = (amplitudes / np.amax(self.amplitudes)) * (dot_max - dot_min) + dot_min
             log.debug('scaled amp  max: %.1f  min: %.1f', np.max(self.scaled_amplitudes) if len(self.scaled_amplitudes) else 0.0, np.min(self.scaled_amplitudes) if len(self.scaled_amplitudes) else 0.0)
         else:
-            self.amplitudes = np.ones(len(freqs), dtype=np.int8)
-            self.scaled_amplitudes = np.full(len(freqs), dot_default, dtype=np.int8)
+            self.amplitudes = np.ones(len(freqs))
+            self.scaled_amplitudes = np.full(len(freqs), dot_default)
 
         self.name = kwargs.get('name', '')
         if config:
@@ -1085,7 +1084,7 @@ class ZeroCrossPlotPanel(PlotPanel):
             bin_mask = (bin_start <= self.freqs) & (self.freqs < bin_end)
             bin_slopes = self.slopes[bin_mask]
             slope_weights = self.scaled_amplitudes[bin_mask]
-            avg_slope = np.average(bin_slopes, weights=slope_weights) if bin_slopes.any() else 0
+            avg_slope = np.average(bin_slopes, weights=slope_weights) if bin_slopes.any() else 0.0
             #avg_slope = np.median(bin_slopes) if bin_slopes.any() else 0
             patch.set_facecolor(cmap.to_rgba(avg_slope))
 
