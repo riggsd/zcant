@@ -96,3 +96,15 @@ get you up and running:
 
  * Use `CMD+s` to save an Anabat-format file, or `CMD-p` to "print" a screenshot image in .PNG format.
  
+
+## Credits
+
+ZCANT was written by David A. Riggs of [Myotisoft LLC](http://myotisoft.com). Inspiration for
+zero-cross analysis of bat echolocation, as well as the Anabat file format by
+[Chris Corben](http://users.lmi.net/corben/).
+
+Free / Open Source software utilized: [Python](http://python.org), [NumPy](http://www.numpy.org/), 
+[MatPlotLib](http://matplotlib.org/), and [wxPython](https://wxpython.org/) for the core of the
+application. Sound playback thanks to the [sounddevice](https://python-sounddevice.readthedocs.io)
+/ [PortAudio](http://www.portaudio.com/) library. Graphic icons by 
+[Open Iconic](https://useiconic.com/open).
