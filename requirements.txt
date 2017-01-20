@@ -6,3 +6,4 @@ py2app==0.9
 scipy==0.13.3
 wxPython==3.0.1.1
 wxPython-common==3.0.1.1
+sounddevice==0.3.6

@@ -23,7 +23,7 @@ import wx
 import numpy as np
 
 import matplotlib
-matplotlib.interactive(True)
+#matplotlib.interactive(True)
 matplotlib.use('WXAgg')
 from matplotlib.figure import Figure
 import matplotlib.ticker
@@ -36,6 +36,7 @@ from zcant import __version__
 from zcant import print_timing
 from zcant.anabat import extract_anabat, AnabatFileWriter
 from zcant.conversion import wav2zc
+from zcant.audio import AudioThread, beep
 
 import logging
 log = logging.getLogger(__name__)
@@ -67,11 +68,6 @@ def title_from_path(path):
     return title.replace('_', ' ')
 
 
-def beep():
-    sys.stdout.write('\a')
-    sys.stdout.flush()
-
-
 class ZcantMainFrame(wx.Frame, wx.PyDropTarget):
 
     WAV_THRESHOLD_DELTA = 0.25  # RMS ratio
@@ -98,6 +94,8 @@ class ZcantMainFrame(wx.Frame, wx.PyDropTarget):
 
         self.window_secs = None
         self.window_start = 0.0
+
+        self.audio_thread = None
 
         self.read_conf()
 
@@ -228,6 +226,7 @@ class ZcantMainFrame(wx.Frame, wx.PyDropTarget):
                                           wx.Bitmap('resources/icons/file-8x.png'),
                                           shortHelp='Open')
         self.Bind(wx.EVT_TOOL, self.on_open, open_item)
+
         tool_bar.AddSeparator()
         prev_dir = tool_bar.AddLabelTool(wx.ID_ANY, 'Prev Folder',
                                          wx.Bitmap('resources/icons/chevron-left-8x.png'),
@@ -249,13 +248,21 @@ class ZcantMainFrame(wx.Frame, wx.PyDropTarget):
                                          shortHelp='Next folder',
                                          longHelp='Open the next folder (or use the `}` key)')
         self.Bind(wx.EVT_TOOL, self.on_next_dir, next_dir)
+
         tool_bar.AddSeparator()
         toggle_compressed = tool_bar.AddLabelTool(wx.ID_ANY, 'Compressed', wx.Bitmap(
             'resources/icons/audio-spectrum-8x.png'),
                                                   shortHelp='Toggle compressed',
                                                   longHelp='Toggle compressed view on/off (or use the `c` key)')
         self.Bind(wx.EVT_TOOL, self.on_compressed_toggle, toggle_compressed)
+
         tool_bar.AddSeparator()
+        play_button = tool_bar.AddLabelTool(wx.ID_ANY, 'Play TE', wx.Bitmap(
+            'resources/icons/volume-high-8x.png'),
+                                            shortHelp='Play time-expanded audio',
+                                            longHelp='Play (or stop playing) 10X time-expanded audio')
+        self.Bind(wx.EVT_TOOL, self.on_audio_play_te, play_button)
+
         # self.SetToolBar(tool_bar)
         tool_bar.Realize()
 
@@ -267,6 +274,7 @@ class ZcantMainFrame(wx.Frame, wx.PyDropTarget):
         threshold_up_id, threshold_down_id, hpfilter_up_id, hpfilter_down_id = wx.NewId(), wx.NewId(), wx.NewId(), wx.NewId()
         win_forward_id, win_back_id, win_zoom_in, win_zoom_out, win_zoom_off = wx.NewId(), wx.NewId(), wx.NewId(), wx.NewId(), wx.NewId()
         save_file_id, save_image_id = wx.NewId(), wx.NewId()
+        play_audio_te_id, play_audio_rt_id = wx.NewId(), wx.NewId()
 
         self.Bind(wx.EVT_MENU, self.on_prev_file, id=prev_file_id)
         self.Bind(wx.EVT_MENU, self.on_next_file, id=next_file_id)
@@ -287,6 +295,8 @@ class ZcantMainFrame(wx.Frame, wx.PyDropTarget):
         self.Bind(wx.EVT_MENU, self.on_zoom_in, id=win_zoom_in)
         self.Bind(wx.EVT_MENU, self.on_zoom_out, id=win_zoom_out)
         self.Bind(wx.EVT_MENU, self.on_zoom_off, id=win_zoom_off)
+        self.Bind(wx.EVT_MENU, self.on_audio_play_te, id=play_audio_te_id)
+        self.Bind(wx.EVT_MENU, self.on_audio_play_rt, id=play_audio_rt_id)
 
         a_table = wx.AcceleratorTable([
             (wx.ACCEL_NORMAL, ord('['),  prev_file_id),
@@ -319,6 +329,9 @@ class ZcantMainFrame(wx.Frame, wx.PyDropTarget):
 
             (wx.ACCEL_CMD, ord('p'), save_image_id),
             (wx.ACCEL_CMD, ord('s'), save_file_id),
+
+            (wx.ACCEL_NORMAL, ord('p'), play_audio_te_id),
+            (wx.ACCEL_SHIFT,  ord('p'), play_audio_rt_id),
         ])
         self.SetAcceleratorTable(a_table)
 
@@ -351,6 +364,21 @@ class ZcantMainFrame(wx.Frame, wx.PyDropTarget):
             intervals_us = np.diff(time_indexes_us)
             intervals_us = intervals_us.astype(int)  # TODO: round before int cast; consider casting before diff for performance
             out.write_intervals(intervals_us)
+
+    def on_audio_play_te(self, event):
+        return self._on_audio_play(10)
+
+    def on_audio_play_rt(self, event):
+        return self._on_audio_play(1)
+
+    def _on_audio_play(self, te):
+        if self.audio_thread is not None and self.audio_thread.is_playing():
+            self.audio_thread.stop()
+        else:
+            if not self.filename.lower().endswith('.wav'):
+                return
+            filename = os.path.join(self.dirname, self.filename)
+            self.audio_thread = AudioThread.play(filename, te)
 
     def on_about(self, event):
         log.debug('about: %s', event)
@@ -607,6 +635,12 @@ class ZcantMainFrame(wx.Frame, wx.PyDropTarget):
         if filename != self.filename:
             # reset some file-specific state
             self.window_start = 0.0
+
+            # kill playback since we're switching files
+            if self.audio_thread is not None:
+                if self.audio_thread.is_playing():
+                    self.audio_thread.stop()
+                self.audio_thread = None
 
         path = os.path.join(dirname, filename)
         if not path:
@@ -1004,6 +1038,7 @@ class ZeroCrossPlotPanel(PlotPanel):
             dot_scatter = self.dot_plot.scatter(self.times, self.freqs, **plot_kwargs)
             self.dot_plot.set_xlim(self.times[0], self.times[-1])
             self.dot_plot.set_xlabel('Time (sec)')
+
         else:
             # Compressed (pseudo-Dot-Per-Pixel) View
             x = range(len(self.freqs))

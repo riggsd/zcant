@@ -1,5 +1,5 @@
-ZCView Keybindings
-==================
+ZCANT Keybindings
+=================
 
 
 Navigation
@@ -25,7 +25,7 @@ l ........ Toggle linear/log scale
 c ........ Switch color palette
 SHIFT+c .. Backward color palette
 
-CMD+p .... Save a .PNG plot image
+CMD+p .... "Print" a .PNG screenshot image
 
 
 WAV Conversion
@@ -38,3 +38,10 @@ SHIFT+UP .... Increase .wav high-pass filter
 SHIFT+DOWN .. Decrease .wav high-pass filter
 
 CMD+s .... Save converted .wav as an Anabat file
+
+
+Audio
+-----
+
+p ......... Play 10x time-expanded audio (press again to stop)
+SHIFT+p ... Play audio in realtime (press 'p' again to stop)
