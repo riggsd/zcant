@@ -84,6 +84,7 @@ class ZcantMainFrame(wx.Frame, wx.PyDropTarget):
         self.is_linear_scale = True
         self.use_smoothed_slopes = False
         self.display_cursor = False
+        self.display_pulse_markers = True
         self.cmap = 'jet'
         self.harmonics = {'0.5': False, '1': True, '2': False, '3': False}
 
@@ -176,6 +177,11 @@ class ZcantMainFrame(wx.Frame, wx.PyDropTarget):
         cursor_item = view_menu.AppendCheckItem(wx.ID_ANY, 'Display Cursor', 'Display horizontal and vertical cursors')
         self.Bind(wx.EVT_MENU, self.on_cursor_toggle, cursor_item)
         cursor_item.Check(self.display_cursor)
+
+        view_menu.AppendSeparator()
+        pulse_marker_item = view_menu.AppendCheckItem(wx.ID_ANY, 'Pulse Markers', 'Display vertical pulse markers in compressed view')
+        self.Bind(wx.EVT_MENU, self.on_pulse_marker_toggle, pulse_marker_item)
+        pulse_marker_item.Check(self.display_pulse_markers)
 
         view_menu.AppendSeparator()
         h05_item = view_menu.AppendCheckItem(wx.ID_ANY, '1/2 Harmonic', ' One-half harmonic')
@@ -697,7 +703,8 @@ class ZcantMainFrame(wx.Frame, wx.PyDropTarget):
         title = title_from_path(metadata.get('path', ''))
         conf = dict(compressed=self.is_compressed, colormap=self.cmap, scale='linear' if self.is_linear_scale else 'log',
                     filter_markers=(self.hpfilter,), harmonics=self.harmonics,
-                    smooth_slopes=self.use_smoothed_slopes, display_cursor=self.display_cursor)
+                    smooth_slopes=self.use_smoothed_slopes, display_cursor=self.display_cursor,
+                    pulse_markers=self.display_pulse_markers)
 
         if self.window_secs is not None:
             times, freqs, amplitudes = self.windowed_view(times, freqs, amplitudes)
@@ -762,6 +769,12 @@ class ZcantMainFrame(wx.Frame, wx.PyDropTarget):
     def on_cursor_toggle(self, event):
         log.debug('displaying cursor...' if not self.display_cursor else 'hiding cursor...')
         self.display_cursor = not self.display_cursor
+        self.reload_file()
+        self.save_conf()  # FIXME: persist this state
+
+    def on_pulse_marker_toggle(self, event):
+        log.debug('displaying pulse markers...' if not self.display_pulse_markers else 'hiding pulse markers...')
+        self.display_pulse_markers = not self.display_pulse_markers
         self.reload_file()
         self.save_conf()  # FIXME: persist this state
 
@@ -974,6 +987,7 @@ class ZeroCrossPlotPanel(PlotPanel):
         'compressed': False,       # compressed view (True) or realtime (False)
         'smooth_slopes': True,     # smooth out noisy slope values
         'interpolate': True,       # interpolate between WAV samples
+        'pulse_markers': True,     # display pulse separators in compressed view
         'display_cursor': False,   # display horiz and vert cursor lines
         'colormap': 'jet',         # named color map
         'dot_sizes': (40, 12, 2),  # dot display sizes in points (max, default, min)
@@ -1032,6 +1046,7 @@ class ZeroCrossPlotPanel(PlotPanel):
 
         if len(self.freqs) < 2:
             dot_scatter = self.dot_plot.scatter([], [])  # empty set
+
         elif not self.config['compressed']:
             # Realtime View
             plot_harmonics(self.times)
@@ -1041,6 +1056,14 @@ class ZeroCrossPlotPanel(PlotPanel):
 
         else:
             # Compressed (pseudo-Dot-Per-Pixel) View
+
+            if self.config['pulse_markers']:
+                # This is a hack for now; smarter pulse detection coming some day...
+                diffs = np.diff(self.times)
+                splits = np.where(diffs > 0.01)[0]  # any time gap larger than 10ms
+                for v in splits:
+                    self.dot_plot.axvline(v, linewidth=0.5, color='#808080')
+
             x = range(len(self.freqs))
             plot_harmonics(x)
             dot_scatter = self.dot_plot.scatter(x, self.freqs, **plot_kwargs)
