@@ -15,6 +15,7 @@ import sys
 import wave
 import os.path
 import re
+from chunk import Chunk
 from datetime import datetime
 
 import numpy as np
@@ -41,6 +42,47 @@ def rms(signal):
     return np.sqrt(np.mean(np.square(signal)))
 
 
+class _Wave_read(wave.Wave_read):
+    """Custom .WAV reader which allows us to ignore word-alignment"""
+    # most of this is copied from parent class, we just need to override chunk.Chunk() calls
+    # scipy.io.wavfile.read() doesn't seem to have this problem at all, switch some day?
+
+    def initfp(self, file):
+        self._convert = None
+        self._soundpos = 0
+        self._file = Chunk(file, bigendian=0, align=self.align)
+        if self._file.getname() != 'RIFF':
+            raise wave.Error, 'file does not start with RIFF id'
+        if self._file.read(4) != 'WAVE':
+            raise wave.Error, 'not a WAVE file'
+        self._fmt_chunk_read = 0
+        self._data_chunk = None
+        while 1:
+            self._data_seek_needed = 1
+            try:
+                chunk = Chunk(self._file, bigendian=0, align=self.align)
+            except EOFError:
+                break
+            chunkname = chunk.getname()
+            if chunkname == 'fmt ':
+                self._read_fmt_chunk(chunk)
+                self._fmt_chunk_read = 1
+            elif chunkname == 'data':
+                if not self._fmt_chunk_read:
+                    raise wave.Error, 'data chunk before fmt chunk'
+                self._data_chunk = chunk
+                self._nframes = chunk.chunksize // self._framesize
+                self._data_seek_needed = 0
+                break
+            chunk.skip()
+        if not self._fmt_chunk_read or not self._data_chunk:
+            raise wave.Error, 'fmt chunk and/or data chunk missing'
+
+    def __init__(self, f, align=True):
+        self.align = align
+        wave.Wave_read.__init__(self, f)
+
+
 @print_timing
 def load_wav(fname):
     """Produce (samplerate, signal) from a .WAV file"""
@@ -48,10 +90,8 @@ def load_wav(fname):
     try:
         wav = wave.open(fname, 'rb')
     except RuntimeError, e:
-        # Python's chunk.py raises the RuntimeError *type* instead of an instance
-        # This arcane bug is triggered by SonoBat example file CCK-13Aug01-828-TabrBzz.wav
-        # That file's fmt chunk is 339 bytes long, so we must barf when not word-aligned. FIXME
-        raise Exception('Failed opening .wav file for read (confusing offsets?)')
+        # chunk.Chunk barfs on odd-sized chunks, so try again ignoring word-alignment
+        wav = _Wave_read(fname, align=False)
 
     w_nchannels, w_sampwidth, w_framerate_hz, w_nframes, w_comptype, w_compname = wav.getparams()
     w_sampbits = w_sampwidth * 8
