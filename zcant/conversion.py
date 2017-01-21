@@ -50,13 +50,15 @@ def load_wav(fname):
     except RuntimeError, e:
         # Python's chunk.py raises the RuntimeError *type* instead of an instance
         # This arcane bug is triggered by SonoBat example file CCK-13Aug01-828-TabrBzz.wav
+        # That file's fmt chunk is 339 bytes long, so we must barf when not word-aligned. FIXME
         raise Exception('Failed opening .wav file for read (confusing offsets?)')
 
     w_nchannels, w_sampwidth, w_framerate_hz, w_nframes, w_comptype, w_compname = wav.getparams()
+    w_sampbits = w_sampwidth * 8
     if w_nchannels > 1:
         raise Exception('Only MONO .wav files are supported!')  # TODO
-    if w_sampwidth != 2:
-        raise Exception('Only 16-bit .wav files are supported (not %d)' % (w_sampwidth*8))  # TODO
+    if w_sampwidth not in (1, 2):
+        raise Exception('Only 16-bit and 8-bit .wav files are supported (not %d)' % w_sampbits)
 
     if w_framerate_hz <= 48000:
         log.debug('Assuming 10X time-expansion for file with samplerate %.1fkHz', w_framerate_hz/1000.0)
@@ -76,9 +78,10 @@ def load_wav(fname):
     if skip_bytes:
         wav_bytes = wav_bytes[skip_bytes:]
         w_nframes -= skip_bytes / w_sampwidth
-        log.debug('expected frames: %d  actual frames: %d', w_nframes, len(wav_bytes)/16)
+        log.debug('expected frames: %d  actual frames: %d', w_nframes, len(wav_bytes)/w_sampwidth)
 
-    signal = np.fromstring(wav_bytes, dtype='int16')
+    dtype = 'int%d' % w_sampbits
+    signal = np.fromstring(wav_bytes, dtype=dtype)
     return w_framerate_hz, signal
 
 
