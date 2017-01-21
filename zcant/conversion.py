@@ -13,8 +13,6 @@ from __future__ import division
 import io
 import sys
 import wave
-import math
-import struct
 import os.path
 import re
 from datetime import datetime
@@ -46,6 +44,7 @@ def rms(signal):
 @print_timing
 def load_wav(fname):
     """Produce (samplerate, signal) from a .WAV file"""
+
     try:
         wav = wave.open(fname, 'rb')
     except RuntimeError, e:
@@ -79,8 +78,7 @@ def load_wav(fname):
         w_nframes -= skip_bytes / w_sampwidth
         log.debug('expected frames: %d  actual frames: %d', w_nframes, len(wav_bytes)/16)
 
-    signal = np.array(struct.Struct('<%dh' % w_nframes).unpack_from(wav_bytes), dtype=np.dtype('int16'))
-    # signal = signal / (2 ** (16-1))  # convert from 16-bit int to float range -1.0 - 1.0
+    signal = np.fromstring(wav_bytes, dtype='int16')
     return w_framerate_hz, signal
 
 
