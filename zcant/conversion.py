@@ -246,22 +246,29 @@ def interpolate(signal, crossings):
     # crossings = np.array(interpolated_crossings, dtype=np.float64)
 
     # FIXME: This is slow, and should ideally be performed entirely within numpy
-    # FIXME: noise_gate has significant influence (instead of i+1, interpolate to next non-zero value?)
     crossings = np.array([i+(np.int64(signal[i]) / np.float64(np.int64(signal[i]) - np.int64(signal[i+1]))) for i in crossings], dtype=np.float64)
     return crossings
 
 
 @print_timing
+def calculate_amplitudes(signal, crossings):
+    # FIXME: slow (can we remain entirely in numpy here?)
+    #return np.asarray([chunk.mean() if chunk.any() else 0 for chunk in np.split(np.abs(signal), crossings)[:-1]])
+    # amazingly it is faster to call np.add.reduce()/len() than to use the numpy mean() method.
+    return np.asarray([np.add.reduce(chunk)/len(chunk) if chunk.any() else 0 for chunk in np.split(np.abs(signal), crossings)[:-1]])
+
+
+@print_timing
 def zero_cross(signal, samplerate, divratio, amplitudes=True, interpolation=False):
     """Produce (times in seconds, frequencies in Hz, and amplitudes) from calculated zero crossings"""
-    log.debug('zero_cross2(..., %d, %d, amplitudes=%s, interpolation=%s)', samplerate, divratio, amplitudes, interpolation)
+    log.debug('zero_cross(..., %d, %d, amplitudes=%s, interpolation=%s)', samplerate, divratio, amplitudes, interpolation)
     divratio /= 2  # required so that our algorithm agrees with the Anabat ZCAIM algorithm
 
     crossings = np.where(np.diff(np.sign(signal)))[0][::divratio*2]  # indexes
     log.debug('Extracted %d crossings' % len(crossings))
 
     if amplitudes:
-        amplitudes = np.asarray([chunk.mean() if chunk.any() else 0 for chunk in np.split(np.abs(signal), crossings)[:-1]])  # FIXME: slow (can we remain entirely in numpy here?)
+        amplitudes = calculate_amplitudes(signal, crossings)
         log.debug('Extracted %d amplitude values' % len(amplitudes))
     else:
         amplitudes = None
@@ -349,7 +356,6 @@ def wav2zc(fname, divratio=8, hpfilter_khz=20, threshold_factor=1.0, interpolati
     if brickwall_hpf and do_hpfilter:
         times_s, freqs_hz, amplitudes = hpf_zc(times_s, freqs_hz, amplitudes, hpfilter_khz*1000)
     if do_noise_gate:
-        log.debug('threshold_factor: %f  bool: %s  isclose: %s', threshold_factor, bool(threshold_factor), np.isclose(threshold_factor, 0.0))
         times_s, freqs_hz, amplitudes = noise_gate_zc(times_s, freqs_hz, amplitudes, threshold_factor)
 
     if len(freqs_hz) > 16384:  # Anabat file format max dots
