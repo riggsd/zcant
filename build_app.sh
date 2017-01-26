@@ -2,6 +2,8 @@
 
 set -e
 
+APP=dist/zcant.app
+
 #FRAMEWORK_EXCLUDES="PyQT PROJ PIL phonon QtCore QtDeclarative QtDesigner QtGui QtHelp QtMultimedia QtNetwork QtOpenGL QtScript QtScriptTools QtSql QtSvg QtTest QtWebKit QtXml QtXmlPatterns"
 
 # clean
@@ -18,11 +20,11 @@ du -h -d 1 dist
 #    rm -rf dist/zcant.app/Contents/Frameworks/${FRAMEWORK}.framework
 #done
 
-JUNK="tests doc docs"
+JUNK="test tests nose doc docs sample_data"
 for DIR in $JUNK; do
-    find dist/zcant.app/Contents/Resources/lib/python2.7/ -name $DIR | xargs rm -rf
+    find $APP/Contents/Resources/lib/python2.7/ -name $DIR | xargs rm -rf
 done
-rm -rf dist/zcant.app/Contents/Resources/mpl-data/sample_data
+rm -rf $APP/Contents/Resources/mpl-data/sample_data
 
 echo "after stripping"
 du -h -d 1 dist

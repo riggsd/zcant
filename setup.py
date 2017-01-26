@@ -10,9 +10,21 @@ Copyright (C) 2012-2017 Myotisoft LLC, all rights reserved.
 You may use, distribute, and modify this code under the terms of the MIT License.
 """
 
+import site
+import os.path
+
 from setuptools import setup
 
 from zcant import __version__
+
+
+def find_dylib(dylib):
+    """Find the absolute path to a named framework dylib"""
+    for dir in site.getsitepackages():
+        path = os.path.join(dir, dylib)
+        if os.path.isfile(path):
+            return path
+    raise RuntimeError('Unable to find dylib: %s' % dylib)
 
 
 APP = 'zcant.py'
@@ -22,11 +34,13 @@ ICON = 'docs/myotisoft_icon.icns'
 
 PY2APP_OPTIONS = {
     'argv_emulation': False,
-    'optimize': 2,
+    'optimize': 1,
     'iconfile': ICON,
-    'excludes': ['phonon', 'qt', 'PyQt4', 'PIL'],
+    'frameworks': [find_dylib('_sounddevice_data/libportaudio.dylib')],
+    'excludes': ['phonon', 'qt', 'PyQt4'],
     'dylib_excludes': ['PyQT', 'QtCore', 'QtDeclarative', 'QtDesigner', 'QtGui', 'QtHelp', 'QtMultimedia', 'QtNetwork', 'QtOpenGL', 'QtScript', 'QtScriptTools', 'QtSql', 'QtSvg', 'QtTest', 'QtWebKit', 'QtXml', 'QtXmlPatterns',
-                       'PIL', 'phonon', '_codecs_cn.so', '_codecs_hk.so', '_codecs_iso2022.so', '_codecs_jp.so', '_codecs_kr.so', '_codecs_tw.so'],
+                        'phonon', 'GEOS',
+                        '_codecs_cn.so', '_codecs_hk.so', '_codecs_iso2022.so', '_codecs_jp.so', '_codecs_kr.so', '_codecs_tw.so'],
     'matplotlib_backends': '-',  # only explicitly imported backends (wx)
 }
 
