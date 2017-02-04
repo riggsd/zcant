@@ -39,6 +39,7 @@ from zcant import print_timing
 from zcant.anabat import extract_anabat, AnabatFileWriter
 from zcant.conversion import wav2zc
 from zcant.audio import AudioThread, beep
+from zcant.core import MainThread
 
 import logging
 log = logging.getLogger(__name__)
@@ -93,6 +94,7 @@ class ZcantMainFrame(wx.Frame, wx.PyDropTarget):
         self.window_secs = None
         self.window_start = 0.0
 
+        self.main_thread = None
         self.audio_thread = None
 
         self.read_conf()
@@ -363,7 +365,7 @@ class ZcantMainFrame(wx.Frame, wx.PyDropTarget):
 
         with AnabatFileWriter(outpath) as out:
             out.write_header(timestamp, self.wav_divratio, species='', note1='Myotisoft ZCANT', note2='')  # TODO
-            time_indexes_us = self._times * 1000000
+            time_indexes_us = self._zc.times * 1000000
             intervals_us = np.diff(time_indexes_us)
             intervals_us = intervals_us.astype(int)  # TODO: round before int cast; consider casting before diff for performance
             out.write_intervals(intervals_us)
@@ -568,11 +570,14 @@ class ZcantMainFrame(wx.Frame, wx.PyDropTarget):
         self.save_conf()
 
     def on_zoom_in(self, event):
+        def largest_power_of_two(n):
+            return 1 << (int(n).bit_length() - 1)
+
         if self.window_secs and self.window_secs <= 1.0 / 256:
             return  # max zoom is 1/256 sec (4 ms)
 
         if self.window_secs is None:
-            self.window_secs = 2.0  # jump immediately to 2 secs... revisit this
+            self.window_secs = largest_power_of_two(self._zc.duration)
         else:
             self.window_secs /= 2
         self.reload_file()
@@ -595,8 +600,8 @@ class ZcantMainFrame(wx.Frame, wx.PyDropTarget):
         if self.window_secs is None:
             return
         window_start = self.window_start + (self.window_secs / 5)
-        if window_start >= self._times[-1]:
-            window_start = self._times[-1] - self.window_secs
+        if window_start >= self._zc.times[-1]:
+            window_start = self._zc.times[-1] - self.window_secs
         if window_start < 0:
             window_start = 0  # very short files?
         log.debug('shifting window forward to %.1f sec', window_start)
@@ -613,22 +618,9 @@ class ZcantMainFrame(wx.Frame, wx.PyDropTarget):
         self.window_start = window_start
         self.reload_file()
 
-    def extract(self, path):
-        """Extract (times, freqs, amplitudes, metadata) from supported filetypes"""
-        ext = os.path.splitext(path)[1].lower()
-        if ext.endswith('#') or ext == '.zc':
-            return extract_anabat(path, hpfilter_khz=self.hpfilter)
-        elif ext == '.wav':
-            return wav2zc(path, divratio=self.wav_divratio,
-                          threshold_factor=self.wav_threshold,
-                          hpfilter_khz=self.hpfilter,
-                          interpolation=self.wav_interpolation)
-        else:
-            raise Exception('Unknown file type: %s', path)
-
     def reload_file(self):
         """Re-plot current file without reloading from disk"""
-        return self.plot(self._times, self._freqs, self._amplitudes, self._metadata)
+        return self.plot(self._zc)
 
     def load_file(self, dirname, filename):
         """Called to either load a new file fresh, or load the current file when we've made
@@ -649,29 +641,26 @@ class ZcantMainFrame(wx.Frame, wx.PyDropTarget):
         if not path:
             return
 
+        kwargs = dict(hpfilter_khz=self.hpfilter,
+                      divratio=self.wav_divratio,
+                      threshold_factor=self.wav_threshold,
+                      interpolation=self.wav_interpolation)
+
         wx.BeginBusyCursor()
+        MainThread(self.after_load, path, **kwargs)
 
-        try:
-            times, freqs, amplitudes, metadata = self.extract(path)
+    def after_load(self, result):
+        log.debug('after_load: %s', result)
+        if result:
+            self.plot(result)
 
-            metadata['path'] = path
-            metadata['filename'] = filename
-            log.debug('    %s:  times: %d  freqs: %d', filename, len(times), len(freqs))
-
-            self.plot(times, freqs, amplitudes, metadata)
-
-            self.dirname, self.filename = dirname, filename
-            self._times, self._freqs, self._amplitudes, self._metadata = times, freqs, amplitudes, metadata  # only set on success
-        except Exception, e:
-            log.exception('Barfed loading file: %s', path)
-
+            # only set state upon success
+            self.filename = result.metadata['filename']
+            self.dirname = os.path.dirname(result.metadata['path'])
+            self._zc = result
         wx.EndBusyCursor()
 
-    def windowed_view(self, times, freqs, amplitudes):
-        # FIXME: don't jump to 2sec window if recording is < 2secs
-        if len(times) < 2:
-            return times, freqs, amplitudes
-
+    def _calculate_window(self, times):
         if times[-1] - self.window_start >= self.window_secs:
             #log.info('NORMAL')
             window_from, window_to = bisect(times, self.window_start), bisect(times, self.window_start + self.window_secs)
@@ -681,43 +670,49 @@ class ZcantMainFrame(wx.Frame, wx.PyDropTarget):
         else:
             #log.info('END OF FILE')
             window_from, window_to = bisect(times, times[-1] - self.window_secs), len(times)-1  # panned to the end
+        return window_from, window_to
 
-        times, freqs = times[window_from:window_to], freqs[window_from:window_to]
-        amplitudes = amplitudes[window_from:window_to] if amplitudes is not None else None
+    def windowed_view(self, zc):
+        # FIXME: don't jump to 2sec window if recording is < 2secs
+        if len(zc) < 2:
+            return zc
+
+        window_from, window_to = self._calculate_window(zc.times)
+        zc = zc[window_from:window_to]
 
         # because times is sparse, we need to fill in edge cases (unfortunately np.insert, np.append copy rather than view)
-        if len(times) == 0 or times[0] > self.window_start:
-            times, freqs = np.insert(times, 0, self.window_start), np.insert(freqs, 0, self.window_start)
-            amplitudes = np.insert(amplitudes, 0, self.window_start) if amplitudes is not None else None
-        if times[-1] < self.window_start + self.window_secs:
-            times, freqs = np.append(times, self.window_start + self.window_secs), np.append(freqs, 0)  # this is wrong for END OF FILE case
-            amplitudes = np.append(amplitudes, 0) if amplitudes is not None else None  # ?
+        if len(zc.times) == 0 or zc.times[0] > self.window_start:
+            zc.times, zc.freqs = np.insert(zc.times, 0, self.window_start), np.insert(zc.freqs, 0, self.window_start)
+            zc.amplitudes = np.insert(zc.amplitudes, 0, self.window_start) if zc.supports_amplitude else None
+        if zc.times[-1] < self.window_start + self.window_secs:
+            zc.times, zc.freqs = np.append(zc.times, self.window_start + self.window_secs), np.append(zc.freqs, 0)  # this is wrong for END OF FILE case
+            amplitudes = np.append(zc.amplitudes, 0) if zc.supports_amplitude else None  # ?
 
-        log.debug('%.1f sec window:  times: %d  freqs: %d', self.window_secs, len(times), len(freqs))
-        return times, freqs, amplitudes
+        log.debug('%.1f sec window:  times: %d  freqs: %d', self.window_secs, len(zc.times), len(zc.freqs))
+        return zc
 
-    def plot(self, times, freqs, amplitudes, metadata):
-        title = title_from_path(metadata.get('path', ''))
+    def plot(self, zc):
+        title = title_from_path(zc.metadata.get('path', ''))
         conf = dict(compressed=self.is_compressed, colormap=self.cmap, scale='linear' if self.is_linear_scale else 'log',
                     filter_markers=(self.hpfilter,), harmonics=self.harmonics,
                     smooth_slopes=self.use_smoothed_slopes, display_cursor=self.display_cursor,
                     pulse_markers=self.display_pulse_markers)
 
         if self.window_secs is not None:
-            times, freqs, amplitudes = self.windowed_view(times, freqs, amplitudes)
+            zc = self.windowed_view(zc)
 
         try:
-            panel = ZeroCrossPlotPanel(self, times, freqs, amplitudes, name=title, config=conf)
+            panel = ZeroCrossPlotPanel(self, zc, name=title, config=conf)
             panel.Show()
 
-            self.update_statusbar(times, freqs, metadata)
+            self.update_statusbar(zc)
 
             if self.plotpanel:
                 self.plotpanel.Destroy()  # out with the old, in with the new
             self.plotpanel = panel
 
         except Exception, e:
-            log.exception('Failed plotting %s', metadata.get('filename', ''))
+            log.exception('Failed plotting %s', zc.metadata.get('filename', ''))
 
     def _pretty_window_size(self):
         if self.window_secs is None:
@@ -729,18 +724,18 @@ class ZcantMainFrame(wx.Frame, wx.PyDropTarget):
             ms = int(round(self.window_secs * 1000))
             return '1/%d sec (%d ms)' % (fractional_secs, ms)
 
-    def update_statusbar(self, times, freqs, metadata):
-        timestamp = metadata.get('timestamp', None) or metadata.get('date', '????-??-??')
+    def update_statusbar(self, zc):
+        timestamp = zc.metadata.get('timestamp', None) or zc.metadata.get('date', '????-??-??')
         if hasattr(timestamp, 'strftime'):
             timestamp = timestamp.strftime('%Y-%m-%d %H:%M:%S')
-        species = ', '.join(metadata.get('species', [])) or '?'
-        min_ = np.amin(freqs) / 1000 if len(freqs) else 0  # TODO: non-zero freqs only
-        max_ = np.amax(freqs) / 1000 if len(freqs) else 0
-        divratio = metadata.get('divratio', self.wav_divratio)
+        species = ', '.join(zc.metadata.get('species', [])) or '?'
+        min_ = np.amin(zc.freqs) / 1000 if len(zc.freqs) else 0  # TODO: non-zero freqs only
+        max_ = np.amax(zc.freqs) / 1000 if len(zc.freqs) else 0
+        divratio = zc.metadata.get('divratio', self.wav_divratio)
         info = 'HPF: %.1f kHz   Sensitivity: %.2f RMS   Div: %d   View: %s' % (self.hpfilter, self.wav_threshold, divratio, self._pretty_window_size())
         self.statusbar.SetStatusText(
             '%s     Dots: %5d     Fmin: %5.1f kHz     Fmax: %5.1f kHz     Species: %s       [%s]'
-            % (timestamp, len(freqs), min_, max_, species, info)
+            % (timestamp, len(zc.freqs), min_, max_, species, info)
         )
 
     def on_compressed_toggle(self, event):
@@ -988,19 +983,19 @@ class ZeroCrossPlotPanel(PlotPanel):
         'harmonics': {'0.5': False, '1': True, '2': False, '3': False},
     }
 
-    def __init__(self, parent, times, freqs, amplitudes, config=None, **kwargs):
-        self.times = times if len(times) else np.array([0.0])
-        self.freqs = freqs if len(freqs) else np.array([0.0])
+    def __init__(self, parent, zc, config=None, **kwargs):
+        self.times = zc.times if zc else np.array([0.0])
+        self.freqs = zc.freqs if zc else np.array([0.0])
         dot_max, dot_default, dot_min = self.config['dot_sizes']
-        if amplitudes is not None:
-            self.amplitudes = amplitudes if len(amplitudes) else np.array([0.0])
+        if zc.supports_amplitude:
+            self.amplitudes = zc.amplitudes if zc else np.array([0.0])
             # normalize amplitude values to display point size
             log.debug(' orig. amp  max: %.1f  min: %.1f', np.max(self.amplitudes), np.min(self.amplitudes))
-            self.scaled_amplitudes = (amplitudes / np.amax(self.amplitudes)) * (dot_max - dot_min) + dot_min
+            self.scaled_amplitudes = (zc.amplitudes / np.amax(self.amplitudes)) * (dot_max - dot_min) + dot_min
             log.debug('scaled amp  max: %.1f  min: %.1f', np.max(self.scaled_amplitudes) if len(self.scaled_amplitudes) else 0.0, np.min(self.scaled_amplitudes) if len(self.scaled_amplitudes) else 0.0)
         else:
-            self.amplitudes = np.ones(len(freqs))
-            self.scaled_amplitudes = np.full(len(freqs), dot_default)
+            self.amplitudes = np.ones(len(zc))
+            self.scaled_amplitudes = np.full(len(zc), dot_default)
 
         self.name = kwargs.get('name', '')
         if config:
