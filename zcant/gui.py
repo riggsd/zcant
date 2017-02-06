@@ -17,20 +17,22 @@ import json
 import webbrowser
 from fnmatch import fnmatch
 from bisect import bisect
+from collections import OrderedDict
 
 import wx
 
 import numpy as np
 
-import matplotlib
-#matplotlib.interactive(True)
-matplotlib.use('WXAgg')
-from matplotlib.figure import Figure
+import matplotlib as mpl
+#mpl.interactive(True)
+mpl.use('WXAgg')
 import matplotlib.ticker
 import matplotlib.gridspec
-from matplotlib.cm import get_cmap, ScalarMappable
+from matplotlib.cm import ScalarMappable
 from matplotlib.colors import Normalize
 from matplotlib.widgets import Cursor, RectangleSelector
+from matplotlib.figure import Figure
+from matplotlib.backends.backend_wxagg import FigureCanvasWxAgg
 
 from zcant import __version__
 from zcant import print_timing
@@ -47,12 +49,7 @@ np.seterr(all='warn')  # switch to 'raise' and NumPy will fail fast on calculati
 
 CONF_FNAME = os.path.expanduser('~/.myotisoft/zcant.ini')
 
-
-CMAP_SEQ  = ['Blues', 'BuGn', 'BuPu', 'GnBu', 'Greens', 'Greys', 'Oranges', 'OrRd', 'PuBu', 'PuBuGn', 'PuRd', 'Purples', 'RdPu', 'Reds', 'YlGn', 'YlGnBu', 'YlOrBr', 'YlOrRd']
-CMAP_SEQ2 = ['afmhot', 'autumn', 'bone', 'cool', 'copper', 'gist_heat', 'gray', 'hot', 'pink', 'spring', 'summer', 'winter']
-CMAP_DIV  = ['BrBG', 'bwr', 'coolwarm', 'PiYG', 'PRGn', 'PuOr', 'RdBu', 'RdGy', 'RdYlBu', 'RdYlGn', 'Spectral', 'seismic']
-CMAP_MISC = ['gist_earth', 'terrain', 'ocean', 'gist_stern', 'brg', 'CMRmap', 'cubehelix', 'gnuplot', 'gnuplot2', 'gist_ncar', 'nipy_spectral', 'jet', 'rainbow', 'gist_rainbow', 'hsv', 'flag', 'prism']
-CMAPS = CMAP_SEQ + CMAP_SEQ2 + CMAP_DIV + CMAP_MISC
+CMAPS = ['jet', 'plasma', 'gnuplot', 'viridis', 'brg']
 
 
 def title_from_path(path):
@@ -850,9 +847,6 @@ class PlotPanel(wx.Panel):
     #       http://sukhbinder.wordpress.com/2013/12/19/matplotlib-with-wxpython-example-with-panzoom-functionality/
 
     def __init__(self, parent, color=None, dpi=None, **kwargs):
-        from matplotlib.backends.backend_wxagg import FigureCanvasWxAgg
-        from matplotlib.figure import Figure
-
         # initialize Panel
         if 'id' not in kwargs.keys():
             kwargs['id'] = wx.ID_ANY
@@ -1023,10 +1017,10 @@ class ZeroCrossPlotPanel(PlotPanel):
     def draw(self):
         # TODO: recycle the figure with `self.fig.clear()` rather than creating new panel and figure each refresh!
 
-        gs = matplotlib.gridspec.GridSpec(1, 3, width_ratios=[85, 5, 10], wspace=0.025)
+        gs = mpl.gridspec.GridSpec(1, 3, width_ratios=[85, 5, 10], wspace=0.025)
 
         # --- Main dot scatter plot ---
-        self.dot_plot = self.figure.add_subplot(gs[0])
+        self.dot_plot = dot_plot = self.figure.add_subplot(gs[0])
 
         miny, maxy = self.config['freqminmax']
         plot_kwargs = dict(cmap=self.config['colormap'],
@@ -1038,21 +1032,21 @@ class ZeroCrossPlotPanel(PlotPanel):
         def plot_harmonics(x):
             """Reusable way to plot harmonics from different view types"""
             if self.config['harmonics']['0.5']:
-                self.dot_plot.scatter(x, self.freqs/2, alpha=0.2, **plot_kwargs)
+                dot_plot.scatter(x, self.freqs/2, alpha=0.2, **plot_kwargs)
             if self.config['harmonics']['2']:
-                self.dot_plot.scatter(x, self.freqs*2, alpha=0.2, **plot_kwargs)
+                dot_plot.scatter(x, self.freqs*2, alpha=0.2, **plot_kwargs)
             if self.config['harmonics']['3']:
-                self.dot_plot.scatter(x, self.freqs*3, alpha=0.2, **plot_kwargs)
+                dot_plot.scatter(x, self.freqs*3, alpha=0.2, **plot_kwargs)
 
         if len(self.freqs) < 2:
-            dot_scatter = self.dot_plot.scatter([], [])  # empty set
+            dot_scatter = dot_plot.scatter([], [])  # empty set
 
         elif not self.config['compressed']:
             # Realtime View
             plot_harmonics(self.times)
-            dot_scatter = self.dot_plot.scatter(self.times, self.freqs, **plot_kwargs)
-            self.dot_plot.set_xlim(self.times[0], self.times[-1])
-            self.dot_plot.set_xlabel('Time (sec)')
+            dot_scatter = dot_plot.scatter(self.times, self.freqs, **plot_kwargs)
+            dot_plot.set_xlim(self.times[0], self.times[-1])
+            dot_plot.set_xlabel('Time (sec)')
 
         else:
             # Compressed (pseudo-Dot-Per-Pixel) View
@@ -1062,40 +1056,44 @@ class ZeroCrossPlotPanel(PlotPanel):
                 diffs = np.diff(self.times)
                 splits = np.where(diffs > 0.01)[0]  # any time gap larger than 10ms
                 for v in splits:
-                    self.dot_plot.axvline(v, linewidth=0.5, color='#808080')
+                    dot_plot.axvline(v, linewidth=0.5, color='#808080')
 
             x = range(len(self.freqs))
             plot_harmonics(x)
-            dot_scatter = self.dot_plot.scatter(x, self.freqs, **plot_kwargs)
-            self.dot_plot.set_xlim(0, len(x))
-            self.dot_plot.set_xlabel('Dot Count')
+            dot_scatter = dot_plot.scatter(x, self.freqs, **plot_kwargs)
+            dot_plot.set_xlim(0, len(x))
+            dot_plot.set_xlabel('Dot Count')
 
-        self.dot_plot.set_title(self.name)
         try:
-            self.dot_plot.set_yscale(self.config['scale'])  # FIXME: fails with "Data has no positive values" error
+            dot_plot.set_yscale(self.config['scale'])  # FIXME: fails with "Data has no positive values" error
         except ValueError:
             log.exception('Failed setting log scale (exception caught)')
             log.error('\ntimes: %s\nfreqs: %s\nslopes: %s', self.times, self.freqs, self.slopes)
-        self.dot_plot.set_ylim(miny, maxy)
-        self.dot_plot.set_ylabel('Frequency (KHz)')
 
-        self.dot_plot.get_yaxis().set_major_formatter(matplotlib.ticker.ScalarFormatter())
+        dot_plot.set_title(self.name)
+        dot_plot.set_ylabel('Frequency (kHz)')
+        dot_plot.set_ylim(miny, maxy)
+
+        # remove the default tick labels, then produce our own instead
+        dot_plot.yaxis.set_minor_formatter(mpl.ticker.NullFormatter())
+        dot_plot.yaxis.set_major_formatter(mpl.ticker.ScalarFormatter())
         minytick = miny if miny % 10 == 0 else miny + 10 - miny % 10  # round up to next 10kHz tick
         maxytick = maxy if maxy % 10 == 0 else maxy + 10 - maxy % 10
         ticks = range(minytick, maxytick+1, 10)   # labels every 10kHz
-        self.dot_plot.get_yaxis().set_ticks(ticks)
+        dot_plot.yaxis.set_ticks(ticks)
 
-        self.dot_plot.grid(axis='y', which='both')
+        dot_plot.set_axisbelow(True)
+        dot_plot.grid(axis='y', which='both', linestyle=':')
 
         for freqk in self.config['markers']:
-            self.dot_plot.axhline(freqk, color='r')
+            dot_plot.axhline(freqk, color='r', linewidth=1.0, zorder=0.9)
 
         for freqk in self.config['filter_markers']:
-            self.dot_plot.axhline(freqk, color='b', linestyle='--')
+            dot_plot.axhline(freqk, color='b', linestyle='--', linewidth=1.1, zorder=0.95)
 
         # draw X and Y cursor; this may beform better if we can use Wx rather than MatPlotLib, see `wxcursor_demo.py`
         if self.config['display_cursor']:
-            self.cursor1 = Cursor(self.dot_plot, useblit=True, color='black', linewidth=1)
+            self.cursor1 = Cursor(dot_plot, useblit=True, color='black', linewidth=1)
 
         # experimental rectangle selection
         def onselect(eclick, erelease):
@@ -1106,11 +1104,11 @@ class ZeroCrossPlotPanel(PlotPanel):
             slope = (np.log2(y2) - np.log2(y1)) / (x2 - x1)  # FIXME: we don't support compressed mode here!
             print '         slope: %.1f oct/sec  (%.1f kHz / %.3f sec)' % (slope, y2 - y1, x2 - x1)
 
-        self.selector = RectangleSelector(self.dot_plot, onselect, drawtype='box')
+        self.selector = RectangleSelector(dot_plot, onselect, drawtype='box')
         #connect('key_press_event', toggle_selector)
 
         # --- Colorbar plot ---
-        cbar_plot = self.figure.add_subplot(gs[1])
+        self.cbar_plot = cbar_plot = self.figure.add_subplot(gs[1])
         cbar_plot.set_title('Slope')
         try:
             cbar = self.figure.colorbar(dot_scatter, cax=cbar_plot, ticks=[])
@@ -1123,7 +1121,7 @@ class ZeroCrossPlotPanel(PlotPanel):
 
         # --- Hist plot ---
 
-        hist_plot = self.figure.add_subplot(gs[2])
+        self.hist_plot = hist_plot = self.figure.add_subplot(gs[2])
         hist_plot.set_title('Freqs')
 
         bin_min, bin_max = self.config['freqminmax']
@@ -1131,10 +1129,11 @@ class ZeroCrossPlotPanel(PlotPanel):
         bin_n = int((bin_max - bin_min) / bin_size)
         n, bins, patches = hist_plot.hist(self.freqs, weights=self.amplitudes,
                                           range=self.config['freqminmax'], bins=bin_n,
-                                          orientation='horizontal')
+                                          orientation='horizontal',
+                                          edgecolor='black')
         hist_plot.set_yscale(self.config['scale'])
         hist_plot.set_ylim(miny, maxy)
-        hist_plot.get_yaxis().set_major_formatter(matplotlib.ticker.ScalarFormatter())
+        hist_plot.yaxis.set_major_formatter(mpl.ticker.ScalarFormatter())
 
         # color histogram bins
         cmap = ScalarMappable(cmap=self.config['colormap'], norm=Normalize(vmin=self.SLOPE_MIN, vmax=self.SLOPE_MAX))
@@ -1146,21 +1145,24 @@ class ZeroCrossPlotPanel(PlotPanel):
             #avg_slope = np.median(bin_slopes) if bin_slopes.any() else 0
             patch.set_facecolor(cmap.to_rgba(avg_slope))
 
+        hist_plot.yaxis.set_minor_formatter(mpl.ticker.NullFormatter())
         hist_plot.yaxis.set_ticks(ticks)
         hist_plot.yaxis.tick_right()
-        hist_plot.grid(axis='y', which='both')
+
         hist_plot.xaxis.set_ticks([])
 
+        hist_plot.set_axisbelow(True)
+        hist_plot.grid(axis='y', which='both', linestyle=':')
+
         for freqk in self.config['markers']:
-            hist_plot.axhline(freqk, color='r')
+            hist_plot.axhline(freqk, color='r', linewidth=1.0, zorder=0.9)
 
         for freqk in self.config['filter_markers']:
-            hist_plot.axhline(freqk, color='b', linestyle='--')
+            hist_plot.axhline(freqk, color='b', linestyle='--', linewidth=1.1, zorder=0.95)
 
         # draw Y cursor
         if self.config['display_cursor']:
             self.cursor3 = Cursor(hist_plot, useblit=True, color='black', linewidth=1, vertOn=False, horizOn=True)
-
 
     # def on_mouse_motion(self, event):
     #     if event.inaxes:

@@ -262,7 +262,7 @@ def calculate_amplitudes(signal, crossings):
 def zero_cross(signal, samplerate, divratio, amplitudes=True, interpolation=False):
     """Produce (times in seconds, frequencies in Hz, and amplitudes) from calculated zero crossings"""
     log.debug('zero_cross(..., %d, %d, amplitudes=%s, interpolation=%s)', samplerate, divratio, amplitudes, interpolation)
-    divratio /= 2  # required so that our algorithm agrees with the Anabat ZCAIM algorithm
+    divratio //= 2  # required so that our algorithm agrees with the Anabat ZCAIM algorithm
 
     crossings = np.where(np.diff(np.sign(signal)))[0][::divratio*2]  # indexes
     log.debug('Extracted %d crossings' % len(crossings))
