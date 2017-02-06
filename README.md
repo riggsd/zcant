@@ -30,13 +30,17 @@ Copyright (C) 2012-2017 by Myotisoft LLC <http://myotisoft.com>
 - Python 2.7
 - NumPy
 - SciPy
-- MatPlotLib
+- MatPlotLib 1.5.3 or 2.0.0+
 - WxPython 3.0
 
 
-## Building
+## Installation
 
-Install wxPython 3.0.1.1. See: https://wiki.wxpython.org/How%20to%20install%20wxPython
+1. Download and install [Python 2.7](https://www.python.org/downloads/), or verify that your existing version is 2.7 with with `python --version`.
+
+2. Install wxPython "classic" 3.0.2.0. See: https://wiki.wxpython.org/How%20to%20install%20wxPython
+
+3. The remainder of the dependencies can be installed using `pip`:
 
     $> pip -r requirements.txt
 
