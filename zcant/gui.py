@@ -46,7 +46,7 @@ np.seterr(all='warn')  # switch to 'raise' and NumPy will fail fast on calculati
 
 CONF_FNAME = os.path.expanduser('~/.myotisoft/zcant.ini')
 
-CMAPS = ['jet', 'plasma', 'gnuplot', 'viridis', 'brg']
+CMAPS = ['gnuplot', 'jet', 'plasma', 'viridis', 'brg']
 
 
 def title_from_path(path):
@@ -79,13 +79,13 @@ class ZcantMainFrame(wx.Frame, wx.PyDropTarget):
         self.use_smoothed_slopes = False
         self.display_cursor = False
         self.display_pulse_markers = True
-        self.cmap = 'jet'
+        self.cmap = 'gnuplot'
         self.harmonics = {'0.5': False, '1': True, '2': False, '3': False}
 
         self.wav_threshold = 1.5
         self.wav_divratio = 16
         self.hpfilter = 17.5
-        self.wav_interpolation = False
+        self.wav_interpolation = True
         self.autosave = False
 
         self.window_secs = None
@@ -502,7 +502,7 @@ class ZcantMainFrame(wx.Frame, wx.PyDropTarget):
             self.filename = conf.get('filename', '')
             self.is_compressed = conf.get('compressed', True)
             self.is_linear_scale = conf.get('linear', True)
-            self.cmap = conf.get('colormap', 'jet')
+            self.cmap = conf.get('colormap', 'gnuplot')
             self.use_smoothed_slopes = conf.get('smooth_slopes', False)
             self.wav_interpolation = conf.get('interpolation', True)
             #self.autosave = conf.get('autosave', False)  # TODO: for now, we choose to always start with autosave off
@@ -896,7 +896,7 @@ class ZeroCrossPlotPanel(PlotPanel):
         'interpolate': True,       # interpolate between WAV samples
         'pulse_markers': True,     # display pulse separators in compressed view
         'display_cursor': False,   # display horiz and vert cursor lines
-        'colormap': 'jet',         # named color map
+        'colormap': 'gnuplot',         # named color map
         'dot_sizes': (40, 12, 2),  # dot display sizes in points (max, default, min)
         'harmonics': {'0.5': False, '1': True, '2': False, '3': False},
     }
