@@ -15,16 +15,14 @@ import os.path
 import sys
 import json
 import webbrowser
-from fnmatch import fnmatch
 from bisect import bisect
-from collections import OrderedDict
+from fnmatch import fnmatch
 
 import wx
 
 import numpy as np
 
 import matplotlib as mpl
-#mpl.interactive(True)
 mpl.use('WXAgg')
 import matplotlib.ticker
 import matplotlib.gridspec
@@ -36,10 +34,8 @@ from matplotlib.backends.backend_wxagg import FigureCanvasWxAgg
 
 from zcant import __version__
 from zcant import print_timing
-from zcant.anabat import extract_anabat, AnabatFileWriter
-from zcant.conversion import wav2zc
 from zcant.audio import AudioThread, beep
-from zcant.core import MainThread
+from zcant.core import MainThread, AnabatFileWriteThread
 
 import logging
 log = logging.getLogger(__name__)
@@ -355,20 +351,15 @@ class ZcantMainFrame(wx.Frame, wx.PyDropTarget):
         # For now, we will only save a converted .WAV as Anabat file
         if not self.filename.lower().endswith('.wav'):
             return
+
         outdir = os.path.join(self.dirname, '_ZCANT_Converted')
         if not os.path.exists(outdir):
             os.makedirs(outdir)
+
         outfname = self.filename[:-4]+'.zc'
         outpath = os.path.join(outdir, outfname)
-        timestamp = self._metadata.get('timestamp', None)
-        log.debug('Saving %s ...', outpath)
 
-        with AnabatFileWriter(outpath) as out:
-            out.write_header(timestamp, self.wav_divratio, species='', note1='Myotisoft ZCANT', note2='')  # TODO
-            time_indexes_us = self._zc.times * 1000000
-            intervals_us = np.diff(time_indexes_us)
-            intervals_us = intervals_us.astype(int)  # TODO: round before int cast; consider casting before diff for performance
-            out.write_intervals(intervals_us)
+        AnabatFileWriteThread(self.zc, outpath, self.wav_divratio)
 
     def on_audio_play_te(self, event):
         return self._on_audio_play(10)
@@ -571,13 +562,16 @@ class ZcantMainFrame(wx.Frame, wx.PyDropTarget):
 
     def on_zoom_in(self, event):
         def largest_power_of_two(n):
-            return 1 << (int(n).bit_length() - 1)
+            if n >= 1.0:
+                return 1 << (int(n).bit_length() - 1)
+            else:
+                return largest_power_of_two(n * 1000) / 1000.0
 
         if self.window_secs and self.window_secs <= 1.0 / 256:
             return  # max zoom is 1/256 sec (4 ms)
 
         if self.window_secs is None:
-            self.window_secs = largest_power_of_two(self._zc.duration)
+            self.window_secs = largest_power_of_two(self.zc.duration)
         else:
             self.window_secs /= 2
         self.reload_file()
@@ -600,8 +594,8 @@ class ZcantMainFrame(wx.Frame, wx.PyDropTarget):
         if self.window_secs is None:
             return
         window_start = self.window_start + (self.window_secs / 5)
-        if window_start >= self._zc.times[-1]:
-            window_start = self._zc.times[-1] - self.window_secs
+        if window_start >= self.zc.times[-1]:
+            window_start = self.zc.times[-1] - self.window_secs
         if window_start < 0:
             window_start = 0  # very short files?
         log.debug('shifting window forward to %.1f sec', window_start)
@@ -620,7 +614,7 @@ class ZcantMainFrame(wx.Frame, wx.PyDropTarget):
 
     def reload_file(self):
         """Re-plot current file without reloading from disk"""
-        return self.plot(self._zc)
+        return self.plot(self.zc)
 
     def load_file(self, dirname, filename):
         """Called to either load a new file fresh, or load the current file when we've made
@@ -657,39 +651,8 @@ class ZcantMainFrame(wx.Frame, wx.PyDropTarget):
             # only set state upon success
             self.filename = result.metadata['filename']
             self.dirname = os.path.dirname(result.metadata['path'])
-            self._zc = result
+            self.zc = result
         wx.EndBusyCursor()
-
-    def _calculate_window(self, times):
-        if times[-1] - self.window_start >= self.window_secs:
-            #log.info('NORMAL')
-            window_from, window_to = bisect(times, self.window_start), bisect(times, self.window_start + self.window_secs)
-        elif self.window_secs >= times[-1]:
-            #log.info('WINDOW TOO BIG')
-            window_from, window_to = 0, len(times)-1  # window is bigger than file
-        else:
-            #log.info('END OF FILE')
-            window_from, window_to = bisect(times, times[-1] - self.window_secs), len(times)-1  # panned to the end
-        return window_from, window_to
-
-    def windowed_view(self, zc):
-        # FIXME: don't jump to 2sec window if recording is < 2secs
-        if len(zc) < 2:
-            return zc
-
-        window_from, window_to = self._calculate_window(zc.times)
-        zc = zc[window_from:window_to]
-
-        # because times is sparse, we need to fill in edge cases (unfortunately np.insert, np.append copy rather than view)
-        if len(zc) == 0 or zc.times[0] > self.window_start:
-            zc.times, zc.freqs = np.insert(zc.times, 0, self.window_start), np.insert(zc.freqs, 0, self.window_start)
-            zc.amplitudes = np.insert(zc.amplitudes, 0, self.window_start) if zc.supports_amplitude else None
-        if zc.times[-1] < self.window_start + self.window_secs:
-            zc.times, zc.freqs = np.append(zc.times, self.window_start + self.window_secs), np.append(zc.freqs, 0)  # this is wrong for END OF FILE case
-            zc.amplitudes = np.append(zc.amplitudes, 0) if zc.supports_amplitude else None  # ?
-
-        log.debug('%.1f sec window:  times: %d  freqs: %d', self.window_secs, len(zc.times), len(zc.freqs))
-        return zc
 
     def plot(self, zc):
         title = title_from_path(zc.metadata.get('path', ''))
@@ -699,7 +662,7 @@ class ZcantMainFrame(wx.Frame, wx.PyDropTarget):
                     pulse_markers=self.display_pulse_markers)
 
         if self.window_secs is not None:
-            zc = self.windowed_view(zc)
+            zc = zc.windowed(self.window_start, self.window_secs)
 
         try:
             panel = ZeroCrossPlotPanel(self, zc, name=title, config=conf)
@@ -729,8 +692,8 @@ class ZcantMainFrame(wx.Frame, wx.PyDropTarget):
         if hasattr(timestamp, 'strftime'):
             timestamp = timestamp.strftime('%Y-%m-%d %H:%M:%S')
         species = ', '.join(zc.metadata.get('species', [])) or '?'
-        min_ = np.amin(zc.freqs) / 1000 if len(zc.freqs) else 0  # TODO: non-zero freqs only
-        max_ = np.amax(zc.freqs) / 1000 if len(zc.freqs) else 0
+        min_ = np.amin(zc.freqs) / 1000 if zc else -0.0  # TODO: non-zero freqs only
+        max_ = np.amax(zc.freqs) / 1000 if zc else -0.0
         divratio = zc.metadata.get('divratio', self.wav_divratio)
         info = 'HPF: %.1f kHz   Sensitivity: %.2f RMS   Div: %d   View: %s' % (self.hpfilter, self.wav_threshold, divratio, self._pretty_window_size())
         self.statusbar.SetStatusText(
@@ -900,69 +863,6 @@ class PlotPanel(wx.Panel):
         pass  # abstract, to be overridden by child classes
 
 
-@print_timing
-def smooth(slopes):
-    """
-    Smooth slope values to account for the fact that zero-cross conversion may be noisy.
-    :param slopes: slope values
-    :return:
-    TODO: smooth individual pulses independently so we don't smooth across their boundaries
-    """
-    WINDOW_SIZE = 3  # hard-coded for now
-    if slopes.size == 0:
-        return np.array([])
-    elif slopes.size == 1:
-        return np.array([0.0])
-    elif slopes.size == 2:
-        return np.array([0.0, 0.0])
-    elif slopes.size == 3:
-        return np.array([0.0, 0.0, 0.0])
-    # Rather than true convolution, we use a much faster cumulative sum solution
-    # http://stackoverflow.com/a/11352216
-    # http://stackoverflow.com/a/34387987
-    slopes = np.where(np.isnan(slopes), 0, slopes)  # replace NaN values
-    cumsum = np.cumsum(np.insert(slopes, 0, 0))
-    smoothed = (cumsum[WINDOW_SIZE:] - cumsum[:-WINDOW_SIZE]) / WINDOW_SIZE
-    # smoothed is missing element at start and end, so fake 'em
-    smoothed = np.insert(smoothed, 0, smoothed[0])
-    smoothed = np.insert(smoothed, -1, smoothed[-1])
-    return smoothed
-
-
-@print_timing
-def slopes(x, y, smooth_slopes=False, max_slope=5000):
-    """
-    Produce an array of slope values in octaves per second.
-    We very, very crudely try to compensate for the jump between pulses, but don't deal well with noise.
-    :param x:
-    :param y:
-    :return:
-    """
-    if not len(x) or not len(y):
-        return np.array([])
-    elif len(x) == 1:
-        return np.array([0.0])
-
-    if not np.any(y):
-        y_octaves = y
-    else:
-        # calculation for difference wil be same in Hz or kHz, so no need to convert
-        y_octaves = np.log2(y)
-        y_octaves[np.isnan(y_octaves)] = 0.0
-    slopes = np.diff(y_octaves) / np.diff(x)
-    slopes = np.append(slopes, slopes[-1])  # FIXME: hack for final dot (instead merge slope(signal[1:]) and slope(signal[:-1])
-    slopes = np.abs(slopes)  # Analook inverts slope so we do also (but should we keep the distinction between positive and negative slopes??)
-    log.debug('Smax: %.1f OPS   Smin: %.1f OPS', np.amax(slopes), np.amin(slopes))
-    slopes[slopes > 5000] = 0.0  # super-steep is probably noise or a new pulse
-    slopes[np.isnan(slopes)] = 0.0
-
-    if smooth_slopes:
-        # FIXME: rather than smoothing after the fact, can we simply calculate slope initially across every 2nd element?
-        slopes = smooth(slopes)
-
-    return slopes
-
-
 class ZeroCrossPlotPanel(PlotPanel):
 
     SLOPE_MAX = 1000  #750  # highest slope value (oct/sec) of our color scale; TODO: make scale log-based?
@@ -984,6 +884,7 @@ class ZeroCrossPlotPanel(PlotPanel):
     }
 
     def __init__(self, parent, zc, config=None, **kwargs):
+        self.zc = zc
         self.times = zc.times if zc else np.array([0.0])
         self.freqs = zc.freqs if zc else np.array([0.0])
         dot_max, dot_default, dot_min = self.config['dot_sizes']
@@ -1001,7 +902,7 @@ class ZeroCrossPlotPanel(PlotPanel):
         if config:
             self.config.update(config)
 
-        self.slopes = slopes(self.times, self.freqs, smooth_slopes=self.config['smooth_slopes'])
+        self.slopes = zc.get_slopes(smooth=self.config['smooth_slopes'])
         self.freqs = self.freqs / 1000  # convert Hz to KHz  (the /= operator doesn't work here?!)
 
         PlotPanel.__init__(self, parent, **kwargs)
@@ -1047,10 +948,7 @@ class ZeroCrossPlotPanel(PlotPanel):
             # Compressed (pseudo-Dot-Per-Pixel) View
 
             if self.config['pulse_markers']:
-                # This is a hack for now; smarter pulse detection coming some day...
-                diffs = np.diff(self.times)
-                splits = np.where(diffs > 0.01)[0]  # any time gap larger than 10ms
-                for v in splits:
+                for v in self.zc.get_pulses():
                     dot_plot.axvline(v, linewidth=0.5, color='#808080')
 
             x = range(len(self.freqs))
