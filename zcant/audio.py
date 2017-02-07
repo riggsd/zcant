@@ -8,11 +8,10 @@ You may use, distribute, and modify this code under the terms of the MIT License
 """
 
 import threading
-from sys import stdout
 
-from conversion import load_wav, highpassfilter
+from conversion import load_wav
 
-#import scipy.signal
+from scipy.io import wavfile
 
 import sounddevice
 #print sounddevice.get_portaudio_version()
@@ -23,19 +22,21 @@ __all__ = 'AudioThread', 'play_te', 'beep'
 
 def beep():
     """Play an amazing beep sound."""
-    stdout.write('\a')
-    stdout.flush()
+    # we opt out of our own `load_wav()` since this is low samplerate (no implied TE)
+    samplerate, signal = wavfile.read('resources/beep.wav', mmap=True)
+    AudioThread.play((samplerate, signal), te=None)
 
 
 def play_te(fname, te=10, blocking=False):
     """Play a time-expanded version of the specified .WAV file or (samplerate, signal) .WAV data"""
-    print 'play_te(%s, TE=%dX)' % (fname, te)
+    print 'play_te(%s, TE=%sX)' % (fname, te)
     if type(fname) == tuple:
         samplerate, signal = fname
     else:
         samplerate, signal = load_wav(fname)
 
-    samplerate //= te
+    if te:
+        samplerate //= te
 
     #if samplerate in (441000, 480000):  # unsupported high samplerates... oof!
     #    samplerate //= 10
