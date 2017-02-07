@@ -86,6 +86,7 @@ class ZcantMainFrame(wx.Frame, wx.PyDropTarget):
         self.wav_divratio = 16
         self.hpfilter = 17.5
         self.wav_interpolation = False
+        self.autosave = False
 
         self.window_secs = None
         self.window_start = 0.0
@@ -190,6 +191,11 @@ class ZcantMainFrame(wx.Frame, wx.PyDropTarget):
 
         # -- Conversion Menu
         convert_menu = wx.Menu()
+
+        autosave_item = convert_menu.AppendCheckItem(wx.ID_ANY, 'Auto-Save', ' Automatically save converted .WAV files to Anabat format')
+        autosave_item.Check(self.autosave)
+        self.Bind(wx.EVT_MENU, self.on_autosave_toggle, autosave_item)
+
         convert_menu.AppendSeparator()
         div4_item = convert_menu.AppendRadioItem(wx.ID_ANY, 'Div 4', ' 1/4 frequency division ratio')
         div4_item.Check(self.wav_divratio == 4)
@@ -205,16 +211,17 @@ class ZcantMainFrame(wx.Frame, wx.PyDropTarget):
         self.Bind(wx.EVT_MENU, lambda e: self.on_divratio_select(32), div32_item)
 
         convert_menu.AppendSeparator()
-        interpolation_item = convert_menu.AppendCheckItem(wx.ID_ANY, 'Interpolate', 'Interpolate between .WAV samples')
+        interpolation_item = convert_menu.AppendCheckItem(wx.ID_ANY, 'Interpolate', ' Interpolate between .WAV samples')
         self.Bind(wx.EVT_MENU, self.on_interpolation_toggle, interpolation_item)
         interpolation_item.Check(self.wav_interpolation)
+
         menu_bar.Append(convert_menu, '&Conversion')
 
         # -- Help Menu
         help_menu = wx.Menu()
-        keybindings_item = help_menu.Append(wx.ID_ANY, 'Keyboard Shortcuts', 'View list of keyboard shortcuts')
+        keybindings_item = help_menu.Append(wx.ID_ANY, 'Keyboard Shortcuts', ' View list of keyboard shortcuts')
         self.Bind(wx.EVT_MENU, lambda e: self.on_view_keybindings, keybindings_item)
-        website_item = help_menu.Append(wx.ID_ANY, 'Myotisoft Website', 'Visit the Myotisoft website')
+        website_item = help_menu.Append(wx.ID_ANY, 'Myotisoft Website', ' Visit the Myotisoft website')
         self.Bind(wx.EVT_MENU, lambda e: webbrowser.open_new_tab('http://myotisoft.com'), website_item)
         menu_bar.Append(help_menu, '&Help')
 
@@ -346,6 +353,10 @@ class ZcantMainFrame(wx.Frame, wx.PyDropTarget):
         except Exception, e:
             log.exception('Failed saving image: %s', imagename)
 
+    def on_autosave_toggle(self, event):
+        log.debug('Turning %s auto-save mode', 'off' if self.autosave else 'on')
+        self.autosave = not self.autosave
+
     @print_timing
     def on_save_file(self, event):
         # For now, we will only save a converted .WAV as Anabat file
@@ -475,6 +486,7 @@ class ZcantMainFrame(wx.Frame, wx.PyDropTarget):
             'harmonics':  self.harmonics,
             'smooth_slopes': self.use_smoothed_slopes,
             'interpolation': self.wav_interpolation,
+            'autosave':   self.autosave,
         }
         with open(CONF_FNAME, 'w') as outf:
             logging.debug('Writing conf file: %s', CONF_FNAME)
@@ -493,6 +505,7 @@ class ZcantMainFrame(wx.Frame, wx.PyDropTarget):
             self.cmap = conf.get('colormap', 'jet')
             self.use_smoothed_slopes = conf.get('smooth_slopes', False)
             self.wav_interpolation = conf.get('interpolation', True)
+            #self.autosave = conf.get('autosave', False)  # TODO: for now, we choose to always start with autosave off
             harmonics = conf.get('harmonics', {'0.5': False, '1': True, '2': False, '3': False})
 
     def listdir(self, dirname):
@@ -644,6 +657,7 @@ class ZcantMainFrame(wx.Frame, wx.PyDropTarget):
         MainThread(self.after_load, path, **kwargs)
 
     def after_load(self, result):
+        # callback when we return from asynchronous MainThread
         log.debug('after_load: %s', result)
         if result:
             self.plot(result)
@@ -652,6 +666,10 @@ class ZcantMainFrame(wx.Frame, wx.PyDropTarget):
             self.filename = result.metadata['filename']
             self.dirname = os.path.dirname(result.metadata['path'])
             self.zc = result
+
+            if self.autosave:
+                self.on_save_file(None)
+
         wx.EndBusyCursor()
 
     def plot(self, zc):
