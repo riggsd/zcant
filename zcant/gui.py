@@ -681,12 +681,12 @@ class ZcantMainFrame(wx.Frame, wx.PyDropTarget):
         zc = zc[window_from:window_to]
 
         # because times is sparse, we need to fill in edge cases (unfortunately np.insert, np.append copy rather than view)
-        if len(zc.times) == 0 or zc.times[0] > self.window_start:
+        if len(zc) == 0 or zc.times[0] > self.window_start:
             zc.times, zc.freqs = np.insert(zc.times, 0, self.window_start), np.insert(zc.freqs, 0, self.window_start)
             zc.amplitudes = np.insert(zc.amplitudes, 0, self.window_start) if zc.supports_amplitude else None
         if zc.times[-1] < self.window_start + self.window_secs:
             zc.times, zc.freqs = np.append(zc.times, self.window_start + self.window_secs), np.append(zc.freqs, 0)  # this is wrong for END OF FILE case
-            amplitudes = np.append(zc.amplitudes, 0) if zc.supports_amplitude else None  # ?
+            zc.amplitudes = np.append(zc.amplitudes, 0) if zc.supports_amplitude else None  # ?
 
         log.debug('%.1f sec window:  times: %d  freqs: %d', self.window_secs, len(zc.times), len(zc.freqs))
         return zc

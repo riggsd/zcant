@@ -23,6 +23,10 @@ class ZeroCross(object):
     """Represents a zero-cross signal"""
 
     def __init__(self, times, freqs, amplitudes, metadata):
+        if len(times) != len(freqs):
+            raise ValueError('times (%d) and freqs (%d) have different lengths' % (len(times), len(freqs)))
+        if len(times) != len(amplitudes):
+            raise ValueError('times (%d) and amplitudes (%d) have different lengths' % (len(times), len(amplitudes)))
         self.times = times
         self.freqs = freqs
         self.amplitudes = amplitudes
