@@ -22,6 +22,8 @@ import wx
 import logging
 log = logging.getLogger(__name__)
 
+np.seterr(all='warn')  # switch to 'raise' and NumPy will fail fast on calculation errors
+
 
 class ZeroCross(object):
     """Represents a zero-cross signal.

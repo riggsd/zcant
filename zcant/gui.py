@@ -41,9 +41,6 @@ import logging
 log = logging.getLogger(__name__)
 
 
-np.seterr(all='warn')  # switch to 'raise' and NumPy will fail fast on calculation errors
-
-
 CONF_FNAME = os.path.expanduser('~/.myotisoft/zcant.ini')
 
 CMAPS = ['gnuplot', 'jet', 'plasma', 'viridis', 'brg']
@@ -220,7 +217,7 @@ class ZcantMainFrame(wx.Frame, wx.PyDropTarget):
         # -- Help Menu
         help_menu = wx.Menu()
         keybindings_item = help_menu.Append(wx.ID_ANY, 'Keyboard Shortcuts', ' View list of keyboard shortcuts')
-        self.Bind(wx.EVT_MENU, lambda e: self.on_view_keybindings, keybindings_item)
+        self.Bind(wx.EVT_MENU, self.on_view_keybindings, keybindings_item)
         website_item = help_menu.Append(wx.ID_ANY, 'Myotisoft Website', ' Visit the Myotisoft website')
         self.Bind(wx.EVT_MENU, lambda e: webbrowser.open_new_tab('http://myotisoft.com'), website_item)
         menu_bar.Append(help_menu, '&Help')
@@ -394,8 +391,17 @@ class ZcantMainFrame(wx.Frame, wx.PyDropTarget):
         dlg.Destroy()
 
     def on_view_keybindings(self, event):
-        log.debug('keybindings', event)
-        # TODO display keybindings
+        log.debug('keybindings: %s', event)
+        fname = 'resources/keybindings.pdf'
+        # Ugh, pkg_resources API doesn't work with py2app, so we try a few methods to find file
+        if os.path.exists(fname):
+            launch_external(fname)
+        else:
+            from pkg_resources import resource_exists, resource_filename
+            if resource_exists('zcant', fname):
+                launch_external(resource_filename(fname))
+            else:
+                log.debug('Unable to locate file %s !', fname)
 
     def on_exit(self, event):
         log.debug('exit: %s', event)
@@ -1079,3 +1085,15 @@ class ZeroCrossPlotPanel(PlotPanel):
     #     if event.inaxes:
     #         x, y = event.xdata, event.ydata
     #         print '%.1fkHz, %.1f' % (y, x)
+
+
+def launch_external(fname):
+    """Cross-platform way to launch a file using the preferred external program"""
+    log.debug('Launching with external program: %s ...', fname)
+    import subprocess
+    if sys.platform.startswith('darwin'):
+        subprocess.call(('open', fname))
+    elif os.name == 'nt':
+        os.startfile(fname)
+    elif os.name == 'posix':
+        subprocess.call(('xdg-open', fname))
