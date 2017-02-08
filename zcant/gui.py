@@ -59,7 +59,7 @@ def title_from_path(path):
     return title.replace('_', ' ')
 
 
-class ZcantMainFrame(wx.Frame, wx.PyDropTarget):
+class ZcantMainFrame(wx.Frame, wx.FileDropTarget):
 
     WAV_THRESHOLD_DELTA = 0.25  # RMS ratio
     HPF_DELTA = 2.5             # kHz
@@ -127,12 +127,7 @@ class ZcantMainFrame(wx.Frame, wx.PyDropTarget):
         self.init_keybindings()
 
         # configure drag-and-drop
-        wx.PyDropTarget.__init__(self)
-        data_obj = wx.DataObjectComposite()
-        data_obj.Add(wx.FileDataObject(), True)
-        data_obj.Add(wx.TextDataObject())
-        self.drop_handler = data_obj
-        self.SetDataObject(self.drop_handler)
+        wx.FileDropTarget.__init__(self)
         self.SetDropTarget(self)
 
     def init_menu(self):
@@ -418,62 +413,12 @@ class ZcantMainFrame(wx.Frame, wx.PyDropTarget):
             self.save_conf()
         dlg.Destroy()
 
-    def OnData(self, x, y, data):
-        """Drag-and-drop handler, intercepts file and text drops"""
-        # Because we want to handle both file and text drops, we have to do this convoluted
-        # composite handler business, introspect what kind of thing got dropped, and route
-        # it to an appropriate handler.
-        log.debug('OnData: %s, %s, %s', x, y, data)
-        if self.GetData():
-            data_fmt = self.drop_handler.GetReceivedFormat()
-            data_type = data_fmt.GetType()
-            data_obj = self.drop_handler.GetObject(data_fmt)
-            log.debug('%s, %s, %s', data_fmt, data_type, dir(data_obj))
-            if data_type in [wx.DF_UNICODETEXT, wx.DF_TEXT]:
-                text = data_obj.GetDataHere().strip().replace('\0','')  # GetText() doesn't work??
-                return self.OnDropText(x, y, text)
-            elif data_type == wx.DF_FILENAME:
-                filenames = data_obj.GetDataHere().splitlines()  # GetFilenames() doesn't work??
-                return self.OnDropFiles(x, y, filenames)
-            else:
-                beep()
-        return data
-
     def OnDropFiles(self, x, y, filenames):
         """File drag-and-drop handler"""
         log.debug('OnDropFiles: %s, %s, %s', x, y, filenames)
         dirname, filename = os.path.split(filenames[0])
         self.load_file(dirname, filename)
         self.save_conf()
-
-    def OnDropText(self, x, y, text):
-        """Text drag-and-drop handler (as when dragging from an Excel spreadsheet)"""
-        log.debug('OnDropText: %s, %s, %s', x, y, text)
-
-        # absolute file path
-        if os.path.isfile(text):
-            dirname, filename = os.path.split(text)
-            self.load_file(dirname, filename)
-            self.save_conf()
-
-        # absolute directory path
-        elif os.path.isdir(text):
-            dirname = text
-            files = self.listdir(dirname)
-            if not files:
-                return beep()
-            self.load_file(dirname, files[0])
-            self.save_conf()
-
-        # relative file path
-        elif text in os.listdir(self.dirname):
-            dirname, filename = self.dirname, text
-            self.load_file(dirname, filename)
-            self.save_conf()
-
-        # garbage
-        else:
-            return beep()
 
     def save_conf(self):
         conf_dir = os.path.split(CONF_FNAME)[0]
