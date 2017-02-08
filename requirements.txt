@@ -1,6 +1,5 @@
 matplotlib>=1.5.3
 numpy>=1.8.0
 scipy==0.13.3
-wxPython==3.0.2.0
-wxPython-common==3.0.2.0
+git+https://github.com/eliben/pycparser.git#egg=pycparser
 sounddevice==0.3.6
