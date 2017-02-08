@@ -73,7 +73,7 @@ class ZcantMainFrame(wx.Frame, wx.FileDropTarget):
 
         self.is_compressed = True
         self.is_linear_scale = True
-        self.use_smoothed_slopes = False
+        self.use_smoothed_slopes = True
         self.display_cursor = False
         self.display_pulse_markers = True
         self.cmap = 'gnuplot'
@@ -454,7 +454,7 @@ class ZcantMainFrame(wx.Frame, wx.FileDropTarget):
             self.is_compressed = conf.get('compressed', True)
             self.is_linear_scale = conf.get('linear', True)
             self.cmap = conf.get('colormap', 'gnuplot')
-            self.use_smoothed_slopes = conf.get('smooth_slopes', False)
+            self.use_smoothed_slopes = conf.get('smooth_slopes', True)
             self.wav_interpolation = conf.get('interpolation', True)
             #self.autosave = conf.get('autosave', False)  # TODO: for now, we choose to always start with autosave off
             harmonics = conf.get('harmonics', {'0.5': False, '1': True, '2': False, '3': False})
