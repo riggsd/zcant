@@ -392,7 +392,7 @@ class ZcantMainFrame(wx.Frame, wx.PyDropTarget):
 
     def on_view_keybindings(self, event):
         log.debug('keybindings: %s', event)
-        fname = 'resources/keybindings.pdf'
+        fname = os.path.normpath('resources/keybindings.pdf')
         # Ugh, pkg_resources API doesn't work with py2app, so we try a few methods to find file
         if os.path.exists(fname):
             launch_external(fname)
