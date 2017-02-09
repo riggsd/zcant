@@ -8,13 +8,27 @@ You may use, distribute, and modify this code under the terms of the MIT License
 """
 
 import threading
+import logging
+from time import sleep
+log = logging.getLogger(__name__)
 
 from conversion import load_wav
 
 from scipy.io import wavfile
 
 import sounddevice
-#print sounddevice.get_portaudio_version()
+
+if not hasattr(sounddevice, 'get_stream'):
+    log.debug('monkey patching sounddevice %s', sounddevice.__version__)
+
+    def get_stream():
+        _last_callback = sounddevice._last_callback
+        if _last_callback:
+            return _last_callback.stream
+        else:
+            raise RuntimeError('play()/rec()/playrec() was not called yet')
+
+    sounddevice.get_stream = get_stream
 
 
 __all__ = 'AudioThread', 'play_te', 'beep'
@@ -29,7 +43,8 @@ def beep():
 
 def play_te(fname, te=10, blocking=False):
     """Play a time-expanded version of the specified .WAV file or (samplerate, signal) .WAV data"""
-    print 'play_te(%s, TE=%sX)' % (fname, te)
+    # TODO: Resample unsupported samplerate audio using https://github.com/bmcfee/resampy
+    log.debug('play_te(%s, TE=%sX)', fname, te)
     if type(fname) == tuple:
         samplerate, signal = fname
     else:
@@ -38,23 +53,21 @@ def play_te(fname, te=10, blocking=False):
     if te:
         samplerate //= te
 
-    #if samplerate in (441000, 480000):  # unsupported high samplerates... oof!
-    #    samplerate //= 10
-    #    #signal = scipy.signal.decimate(signal, 10, ftype='fir', zero_phase=True)
-    #    #signal = scipy.signal.resample(signal, len(signal) // 10, window='hamming')
-    #    # UGH, both these options are terrible for audio. Look into: https://github.com/bmcfee/resampy
-
     sounddevice.play(signal, samplerate, blocking=blocking)
 
 
 class AudioThread(threading.Thread):
-    """Stoppable audio playback thread."""
+    """Stoppable asynchronous audio playback thread."""
 
     def __init__(self, fname, te=10):
         """Create a thread which plays the specified filename (or signal) with time-expansion"""
         threading.Thread.__init__(self, name='AudioThread')
         self.fname = fname
         self.te = te
+        
+        self.stop_requested = False
+        self.stream = None
+        self.daemon = True  # don't hang if program ends while playing
 
     @staticmethod
     def play(fname, te=10):
@@ -64,11 +77,22 @@ class AudioThread(threading.Thread):
         return t
 
     def run(self):
-        play_te(self.fname, self.te, blocking=True)
-
+        # thread main
+        play_te(self.fname, self.te, blocking=False)
+        self.stream = sounddevice.get_stream()
+        while self.stream.active:
+            # poll because the underlying portaudio c-library segfaults on multithreaded access
+            sleep(0.05)
+            if self.stop_requested:
+                sounddevice.stop()
+                return
+        
     def is_playing(self):
         """Check to see if this thread is still playing or if it is dead"""
-        return self.is_alive()
+        try:
+            return self.stream is not None and self.stream.active
+        except sounddevice.PortAudioError, e:
+            return False
 
     def wait(self):
         """Turn a non-blocking call to `play_te()` into a blocking call"""
@@ -76,19 +100,43 @@ class AudioThread(threading.Thread):
 
     def stop(self):
         """Stop audio playback"""
-        if self.is_alive():
-            sounddevice.stop()
+        self.stop_requested = True
+
+
+def device_test():
+    """Print some diagnostics about the underlying portaudio library and host audio support"""
+    rates = [192, 250, 256, 300, 384, 441, 480, 500, 750, 768]
+
+    def test_rates(rates):
+        for r in rates:
+            try:
+                sounddevice.check_input_settings(samplerate=int(r*1000))
+                print '\t%.1f kHz OK' % r
+            except sounddevice.PortAudioError:
+                print '\t%.1f kHz not supported!' % r
+
+    print 'sounddevice ' + sounddevice.__version__
+    print sounddevice.get_portaudio_version()[1]
+    print sounddevice.query_devices()
+
+    print '\n10x Time Expansion:'
+    test_rates([r/10.0 for r in rates])
+    print '\nRealtime:'
+    test_rates(rates)
 
 
 if __name__ == '__main__':
-    print 'Press CTRL-C to end time-expansion playback.'
+    # python -m zcant.audio
+    device_test()
 
-    for te in 4, 8, 10, 12, 16, 20:
-
-        try:
-            a = AudioThread.play('test.wav', te)
-            while a.is_playing():
-                pass
-        except KeyboardInterrupt:
-            a.stop()
-            import time; time.sleep(0.01)
+    # print 'Press CTRL-C to end time-expansion playback.'
+    #
+    # for te in 4, 8, 10, 12, 16, 20:
+    #
+    #     try:
+    #         a = AudioThread.play('test.wav', te)
+    #         while a.is_playing():
+    #             pass
+    #     except KeyboardInterrupt:
+    #         a.stop()
+    #         import time; time.sleep(0.01)
