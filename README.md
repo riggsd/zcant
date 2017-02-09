@@ -98,8 +98,13 @@ get you up and running:
   blue line. (Default is 17.5kHz, which will mask the occurance of some low-frequency North
   American bats.)
 
- * Use `CMD+s` to save an Anabat-format file, or `CMD-p` to "print" a screenshot image in .PNG format.
+* Use `CMD+s` to save an Anabat-format file, or `CMD-p` to "print" a screenshot image in .PNG format.
+  The saved Anabat-format files will be in a sub-folder named "_ZCANT_Converted".
  
+* Delete a .WAV file with the `DELETE` key. Delete just the converted zero-cross file (but not the
+  .WAV itself) with `SHIFT+DELETE`. Files are never truly deleted, they're moved into a sub-folder
+  named "Deleted Files".
+
 
 ## Credits
 

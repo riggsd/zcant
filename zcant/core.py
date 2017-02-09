@@ -227,6 +227,11 @@ class AnabatFileWriteThread(Thread):
 
         log.debug('Saving %s ...', self.fname)
 
+        outdir = os.path.dirname(self.fname)
+        if not os.path.exists(outdir):
+            log.debug('Creating outdir %s ...', outdir)
+            os.makedirs(outdir)
+
         with AnabatFileWriter(self.fname) as out:
             out.write_header(timestamp, self.divratio, species=species, note1=note1, note2=note2)
             time_indexes_us = self.zc.times * 1000000

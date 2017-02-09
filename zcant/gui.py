@@ -270,6 +270,7 @@ class ZcantMainFrame(wx.Frame, wx.FileDropTarget):
         # Key Bindings
         # TODO: move all these IDs to global scope and reuse them in menubar
         prev_file_id, next_file_id, prev_dir_id, next_dir_id = wx.NewId(), wx.NewId(), wx.NewId(), wx.NewId()
+        delete_file_id, delete_zc_file_id = wx.NewId(), wx.NewId()
         compressed_id, scale_id, cmap_id, cmap_back_id = wx.NewId(), wx.NewId(), wx.NewId(), wx.NewId()
         threshold_up_id, threshold_down_id, hpfilter_up_id, hpfilter_down_id = wx.NewId(), wx.NewId(), wx.NewId(), wx.NewId()
         win_forward_id, win_back_id, win_zoom_in, win_zoom_out, win_zoom_off = wx.NewId(), wx.NewId(), wx.NewId(), wx.NewId(), wx.NewId()
@@ -280,6 +281,8 @@ class ZcantMainFrame(wx.Frame, wx.FileDropTarget):
         self.Bind(wx.EVT_MENU, self.on_next_file, id=next_file_id)
         self.Bind(wx.EVT_MENU, self.on_prev_dir, id=prev_dir_id)
         self.Bind(wx.EVT_MENU, self.on_next_dir, id=next_dir_id)
+        self.Bind(wx.EVT_MENU, self.on_file_delete, id=delete_file_id)
+        self.Bind(wx.EVT_MENU, self.on_zc_file_delete, id=delete_zc_file_id)
         self.Bind(wx.EVT_MENU, self.on_compressed_toggle, id=compressed_id)
         self.Bind(wx.EVT_MENU, self.on_scale_toggle, id=scale_id)
         self.Bind(wx.EVT_MENU, self.on_cmap_switch, id=cmap_id)
@@ -306,6 +309,11 @@ class ZcantMainFrame(wx.Frame, wx.FileDropTarget):
 
             (wx.ACCEL_SHIFT, ord('['), prev_dir_id),  # {
             (wx.ACCEL_SHIFT, ord(']'), next_dir_id),  # }
+
+            (wx.ACCEL_NORMAL, wx.WXK_DELETE, delete_file_id),
+            (wx.ACCEL_NORMAL, wx.WXK_BACK,   delete_file_id),  # pretend delete and backspace are the same keys!
+            (wx.ACCEL_SHIFT,  wx.WXK_DELETE, delete_zc_file_id),
+            (wx.ACCEL_SHIFT,  wx.WXK_BACK,   delete_zc_file_id),
 
             (wx.ACCEL_NORMAL, wx.WXK_SPACE, compressed_id),
             (wx.ACCEL_NORMAL, ord('l'), scale_id),
@@ -349,20 +357,58 @@ class ZcantMainFrame(wx.Frame, wx.FileDropTarget):
         log.debug('Turning %s auto-save mode', 'off' if self.autosave else 'on')
         self.autosave = not self.autosave
 
+    def get_zc_outdir(self):
+        return os.path.join(self.dirname, '_ZCANT_Converted')
+
+    def get_zc_outfname(self):
+        return self.filename[:-4]+'.zc'
+
+    def get_zc_outfpath(self):
+        return os.path.join(self.get_zc_outdir(), self.get_zc_outfname())
+
+    def get_delete_outdir(self):
+        return os.path.join(self.dirname, 'Deleted Files')
+
+    def _ensure_dir(self, dirpath):
+        if not os.path.exists(dirpath):
+            os.makedirs(dirpath)
+        return dirpath
+
+    def ensure_delete_outdir(self):
+        return self._ensure_dir(self.get_delete_outdir())
+
+    def ensure_zc_outdir(self):
+        return self._ensure_dir(self.get_zc_outdir())
+
     @print_timing
     def on_save_file(self, event):
         # For now, we will only save a converted .WAV as Anabat file
         if not self.filename.lower().endswith('.wav'):
             return
+        outfile = self.get_zc_outfpath()
+        AnabatFileWriteThread(self.zc, outfile, self.wav_divratio)
 
-        outdir = os.path.join(self.dirname, '_ZCANT_Converted')
-        if not os.path.exists(outdir):
-            os.makedirs(outdir)
+    def on_file_delete(self, event):
+        log.debug('Delete file')
+        currentfile = os.path.join(self.dirname, self.filename)
+        if not os.path.exists(currentfile):
+            return  # we've deleted ourselves into a hole
+        self.on_zc_file_delete(None)
+        dest = self.ensure_delete_outdir()
+        renamed = os.path.join(dest, os.path.basename(self.filename))
+        log.debug('Moving file %s -> %s', currentfile, renamed)
+        os.rename(currentfile, renamed)
+        self.on_next_file(None)
 
-        outfname = self.filename[:-4]+'.zc'
-        outpath = os.path.join(outdir, outfname)
-
-        AnabatFileWriteThread(self.zc, outpath, self.wav_divratio)
+    def on_zc_file_delete(self, event):
+        log.debug('Delete ZC file')
+        zcfile = self.get_zc_outfpath()
+        if not os.path.exists(zcfile):
+            return
+        dest = self.ensure_delete_outdir()
+        renamed = os.path.join(dest, os.path.basename(zcfile))
+        log.debug('Moving file %s -> %s', zcfile, renamed)
+        os.rename(zcfile, renamed)
 
     def on_audio_play_te(self, event):
         return self._on_audio_play(10)
@@ -485,7 +531,7 @@ class ZcantMainFrame(wx.Frame, wx.FileDropTarget):
             i = files.index(self.filename)
         except ValueError:
             i = bisect(files, self.filename)  # deleted out from under us?
-        if i == len(files) - 1:
+        if i >= len(files) - 1:
             return beep()  # we're at the end of the list
         self.load_file(self.dirname, files[i+1])
         self.save_conf()
