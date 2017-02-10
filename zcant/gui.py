@@ -59,6 +59,35 @@ def title_from_path(path):
     return title.replace('_', ' ')
 
 
+class ThresholdToolbarSlider(wx.Slider):
+    """A scaled-value slider which, when embedded in a toolbar, updates the toolbar label"""
+    # sliders only work with integer values, so we scale back and forth between slider-threshold
+    def __init__(self, parent, threshold, delta):
+        wx.Slider.__init__(self, parent, wx.ID_ANY, threshold/delta, 0, 10/delta, style=wx.SL_MIN_MAX_LABELS)
+        self._threshold = threshold
+        self._delta = delta
+        self._tool = None
+
+    def set_tool(self, tool):
+        """Wire up the toolbar's tool object (from `toolbar.AddControl()`)"""
+        self._tool = tool
+        self._update_label(self._threshold)
+        self.Bind(wx.EVT_SCROLL_THUMBTRACK, lambda e: self._update_label(e.GetEventObject().GetValue() * self._delta))
+
+    def _update_label(self, threshold):
+        self._tool.SetLabel('Sensitivity %.2f RMS' % threshold)
+
+    def set_threshold(self, threshold):
+        """Set a new threshold value from an external control"""
+        self._threshold = threshold
+        self.SetValue(threshold / self._delta)
+        self._update_label(threshold)
+
+    @property
+    def threshold(self):
+        return self._threshold
+
+
 class ZcantMainFrame(wx.Frame, wx.FileDropTarget):
 
     WAV_THRESHOLD_DELTA = 0.25  # RMS ratio
@@ -263,7 +292,12 @@ class ZcantMainFrame(wx.Frame, wx.FileDropTarget):
                                             longHelp='Play (or stop playing) 10X time-expanded audio')
         self.Bind(wx.EVT_TOOL, self.on_audio_play_te, play_button)
 
-        # self.SetToolBar(tool_bar)
+        tool_bar.AddSeparator()
+
+        self.threshold_slider = ThresholdToolbarSlider(tool_bar, self.wav_threshold, self.WAV_THRESHOLD_DELTA)
+        self.threshold_slider.set_tool(tool_bar.AddControl(self.threshold_slider))
+        self.Bind(wx.EVT_SCROLL_THUMBRELEASE, self.on_threshold_slider, self.threshold_slider)
+
         tool_bar.Realize()
 
     def init_keybindings(self):
@@ -782,7 +816,8 @@ class ZcantMainFrame(wx.Frame, wx.FileDropTarget):
 
     def on_threshold_up(self, event):
         self.wav_threshold += self.WAV_THRESHOLD_DELTA
-        log.debug('increasing threshold to %.1f x RMS', self.wav_threshold)
+        self.threshold_slider.set_threshold(self.wav_threshold)
+        log.debug('increasing threshold to %.2f RMS', self.wav_threshold)
         self.load_file(self.dirname, self.filename)
         self.save_conf()
 
@@ -790,7 +825,14 @@ class ZcantMainFrame(wx.Frame, wx.FileDropTarget):
         if self.wav_threshold < self.WAV_THRESHOLD_DELTA:
             return
         self.wav_threshold -= self.WAV_THRESHOLD_DELTA
-        log.debug('decreasing threshold to %.1f x RMS', self.wav_threshold)
+        self.threshold_slider.set_threshold(self.wav_threshold)
+        log.debug('decreasing threshold to %.2f RMS', self.wav_threshold)
+        self.load_file(self.dirname, self.filename)
+        self.save_conf()
+
+    def on_threshold_slider(self, event):
+        self.wav_threshold = event.GetEventObject().GetValue() * self.WAV_THRESHOLD_DELTA
+        log.debug('slider threshold to %.2f RMS', self.wav_threshold)
         self.load_file(self.dirname, self.filename)
         self.save_conf()
 
