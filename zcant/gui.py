@@ -19,6 +19,7 @@ from bisect import bisect
 from fnmatch import fnmatch
 
 import wx
+from wx.lib.agw.floatspin import FloatSpin, FS_CENTRE, FS_READONLY, EVT_FLOATSPIN
 
 import numpy as np
 
@@ -62,15 +63,11 @@ def title_from_path(path):
 class ThresholdToolbarSlider(wx.Slider):
     """A scaled-value slider which, when embedded in a toolbar, updates the toolbar label"""
     # sliders only work with integer values, so we scale back and forth between slider-threshold
-    def __init__(self, parent, threshold, delta):
-        wx.Slider.__init__(self, parent, wx.ID_ANY, threshold/delta, 0, 10/delta, style=wx.SL_MIN_MAX_LABELS)
+    def __init__(self, parent_toolbar, threshold, delta, minValue=0, maxValue=10, **kwargs):
+        wx.Slider.__init__(self, parent_toolbar, wx.ID_ANY, threshold/delta, minValue, maxValue/delta, **kwargs)
         self._threshold = threshold
         self._delta = delta
-        self._tool = None
-
-    def set_tool(self, tool):
-        """Wire up the toolbar's tool object (from `toolbar.AddControl()`)"""
-        self._tool = tool
+        self._tool = parent_toolbar.AddControl(self)
         self._update_label(self._threshold)
         self.Bind(wx.EVT_SCROLL_THUMBTRACK, lambda e: self._update_label(e.GetEventObject().GetValue() * self._delta))
 
@@ -88,7 +85,32 @@ class ThresholdToolbarSlider(wx.Slider):
         return self._threshold
 
 
+class HpfToolbarSpinner(FloatSpin):
+    """A spinner box for HPF control embedded in a toolbar"""
+    def __init__(self, parent_toolbar, hpfcutoff, delta, minValue=0, maxValue=100, digits=1, style=FS_CENTRE|FS_READONLY):
+        # FIXME: HIGH PRIORITY: currently set to readonly because our ZcantMainFrame KeyEvent listener intercepts the number '0'!
+        FloatSpin.__init__(self, parent_toolbar, value=hpfcutoff, min_val=minValue, max_val=maxValue, increment=delta, digits=digits, agwStyle=style)
+        self._tool = parent_toolbar.AddControl(self, 'HPF kHz')
+
+        # we currently render plots too slowly to deal with mousewheel events; disconnect them
+        self._textctrl.Unbind(wx.EVT_MOUSEWHEEL)
+        self._spinbutton.Unbind(wx.EVT_MOUSEWHEEL)
+
+    def OnChar(self, event):
+        log.debug('HpfToolbarSpinner.OnChar() %s', event.GetKeyCode())
+        FloatSpin.OnChar(self, event)
+        event.Skip(False)  # fix a bug in `agw.FloatSpin.OnChar()`
+
+    def set_hpfcutoff(self, hpfcutoff):
+        self.SetValue(hpfcutoff)
+
+    @property
+    def hpfcutoff(self):
+        return self.GetValue()
+
+
 class ZcantMainFrame(wx.Frame, wx.FileDropTarget):
+    """This is the main ZCANT GUI window"""
 
     WAV_THRESHOLD_DELTA = 0.25  # RMS ratio
     HPF_DELTA = 2.5             # kHz
@@ -142,15 +164,6 @@ class ZcantMainFrame(wx.Frame, wx.FileDropTarget):
 
         self.init_toolbar()
 
-        # Main layout
-        #self.main_grid = wx.FlexGridSizer(rows=2)
-
-        # Control Panel
-        #self.control_panel = wx.Panel(self)
-        #self.threshold_spinctl = wx.SpinCtrl(self, value=str(self.wav_threshold))  #, pos=(150, 75), size=(60, -1))
-        #self.threshold_spinctl.SetRange(0.0, 10.0)
-
-        # Status Bar
         self.statusbar = self.CreateStatusBar()
 
         self.init_keybindings()
@@ -295,8 +308,10 @@ class ZcantMainFrame(wx.Frame, wx.FileDropTarget):
         tool_bar.AddSeparator()
 
         self.threshold_slider = ThresholdToolbarSlider(tool_bar, self.wav_threshold, self.WAV_THRESHOLD_DELTA)
-        self.threshold_slider.set_tool(tool_bar.AddControl(self.threshold_slider))
         self.Bind(wx.EVT_SCROLL_THUMBRELEASE, self.on_threshold_slider, self.threshold_slider)
+
+        self.hpf_spinner = HpfToolbarSpinner(tool_bar, self.hpfilter, self.HPF_DELTA)
+        self.Bind(EVT_FLOATSPIN, self.on_hpfilter_spinner, self.hpf_spinner)
 
         tool_bar.Realize()
 
@@ -838,7 +853,8 @@ class ZcantMainFrame(wx.Frame, wx.FileDropTarget):
 
     def on_hpfilter_up(self, event):
         self.hpfilter += self.HPF_DELTA
-        log.debug('increasing high-pass filter to %.1f KHz', self.hpfilter)
+        log.debug('increasing high-pass filter to %.1f kHz', self.hpfilter)
+        self.hpf_spinner.set_hpfcutoff(self.hpfilter)
         self.load_file(self.dirname, self.filename)
         self.save_conf()
 
@@ -846,7 +862,14 @@ class ZcantMainFrame(wx.Frame, wx.FileDropTarget):
         if self.hpfilter < self.HPF_DELTA:
             return
         self.hpfilter -= self.HPF_DELTA
-        log.debug('decreasing high-pass filter to %.1f KHz', self.hpfilter)
+        log.debug('decreasing high-pass filter to %.1f kHz', self.hpfilter)
+        self.hpf_spinner.set_hpfcutoff(self.hpfilter)
+        self.load_file(self.dirname, self.filename)
+        self.save_conf()
+
+    def on_hpfilter_spinner(self, event):
+        self.hpfilter = event.GetEventObject().GetValue()
+        log.debug('spinning high-pass filter to %.1f kHz', self.hpfilter)
         self.load_file(self.dirname, self.filename)
         self.save_conf()
 
