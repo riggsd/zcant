@@ -178,8 +178,15 @@ class ZcantMainFrame(wx.Frame, wx.FileDropTarget):
 
         # -- File Menu
         file_menu = wx.Menu()
-        open_item = file_menu.Append(wx.ID_OPEN, '&Open', ' Open a zero-cross file')
+        open_item = file_menu.Append(wx.ID_OPEN, '&Open\tCtrl+O', ' Open a .WAV or zero-cross file')
         self.Bind(wx.EVT_MENU, self.on_open, open_item)
+        save_item = file_menu.Append(wx.ID_SAVE, '&Save\tCtrl+S', ' Save the converted zero-cross file')
+        self.Bind(wx.EVT_MENU, self.on_save_file, save_item)
+        print_item = file_menu.Append(wx.ID_ANY, 'Save &Plot\tCtrl+P', ' Save a .PNG screenshot of the current plot')
+        delete_item = file_menu.Append(wx.ID_DELETE, '&Delete\tDEL', ' Delete the current file')
+        self.Bind(wx.EVT_MENU, self.on_file_delete, delete_item)
+        delete_item = file_menu.Append(wx.ID_DELETE, '&Delete ZC\tShift+DEL', ' Delete just the converted zero-cross version of the current file')
+        self.Bind(wx.EVT_MENU, self.on_file_delete, delete_item)
         about_item = file_menu.Append(wx.ID_ABOUT, '&About', ' Information about this program')
         self.Bind(wx.EVT_MENU, self.on_about, about_item)
         file_menu.AppendSeparator()
@@ -189,9 +196,23 @@ class ZcantMainFrame(wx.Frame, wx.FileDropTarget):
 
         # -- View Menu
         view_menu = wx.Menu()
+        zoom_in_item = view_menu.Append(wx.ID_ANY, 'Zoom In\t+', ' Zoom display in')
+        self.Bind(wx.EVT_MENU, self.on_zoom_in, zoom_in_item)
+        zoom_out_item = view_menu.Append(wx.ID_ANY, 'Zoom Out\t-', ' Zoom display out')
+        self.Bind(wx.EVT_MENU, self.on_zoom_out, zoom_out_item)
+        zoom_whole_item = view_menu.Append(wx.ID_ANY, 'Whole File\t0', ' Zoom display out to show the entire file')
+        self.Bind(wx.EVT_MENU, self.on_zoom_off, zoom_whole_item)
 
         view_menu.AppendSeparator()
-        log_item = view_menu.AppendRadioItem(wx.ID_ANY, 'Log Scale', ' Logarithmic frequency scale')
+        compressed_item = view_menu.AppendRadioItem(wx.ID_ANY, 'Compressed View\tSpace', ' View file in compressed (dot-per-pixel) mode')
+        self.Bind(wx.EVT_MENU, self.on_compressed_toggle, compressed_item)
+        realtime_item = view_menu.AppendRadioItem(wx.ID_ANY, 'Realtime View', ' View file in realtime mode')
+        self.Bind(wx.EVT_MENU, self.on_compressed_toggle, realtime_item)
+        compressed_item.Check(self.is_compressed)
+        realtime_item.Check(not self.is_compressed)
+
+        view_menu.AppendSeparator()
+        log_item = view_menu.AppendRadioItem(wx.ID_ANY, 'Log Scale\tL', ' Logarithmic frequency scale')
         self.Bind(wx.EVT_MENU, self.on_scale_toggle, log_item)
         linear_item = view_menu.AppendRadioItem(wx.ID_ANY, 'Linear Scale', ' Linear frequency scale')
         self.Bind(wx.EVT_MENU, self.on_scale_toggle, linear_item)
