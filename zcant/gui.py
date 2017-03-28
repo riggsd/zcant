@@ -726,7 +726,7 @@ class ZcantMainFrame(wx.Frame, wx.FileDropTarget):
     def after_load(self, result):
         # callback when we return from asynchronous MainThread
         log.debug('after_load: %s', result)
-        if result:
+        if result is not None:
             self.plot(result)
 
             # only set state upon success
