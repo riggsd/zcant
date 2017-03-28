@@ -18,6 +18,8 @@ from datetime import datetime
 
 import numpy as np
 
+from guano import GuanoFile, base64decode, base64encode
+
 from zcant import print_timing
 
 import logging
@@ -31,6 +33,10 @@ ANABAT_129_HEAD_FMT = '< H x B 2x 8s 8s 40s 50s 16s 73s 80s'  # 0x0: data_info_p
 ANABAT_129_DATA_INFO_FMT = '< H H B B'  # 0x11a: data_pointer, res1, divratio, vres
 ANABAT_132_ADDL_DATA_INFO_FMT = '< H B B B B B B H 6s 32s'  # 0x120: year, month, day, hour, minute, second, second_hundredths, microseconds, id_code, gps_data
 
+GuanoFile.register('ZCANT', 'Amplitudes',
+                   lambda b64data: np.frombuffer(base64decode(b64data)),
+                   lambda data: base64encode(data.tobytes()))
+
 
 def _s(s):
     """Strip whitespace and null bytes from string"""
@@ -38,18 +44,19 @@ def _s(s):
 
 
 @print_timing
-def hpf_zc(times_s, freqs_hz, cutoff_freq_hz):
+def hpf_zc(times_s, freqs_hz, amplitudes, cutoff_freq_hz):
     if not cutoff_freq_hz or len(freqs_hz) == 0:
-        return times_s, freqs_hz
+        return times_s, freqs_hz, amplitudes
     hpf_mask = np.where(freqs_hz > cutoff_freq_hz)
     junk_count = len(freqs_hz) - np.count_nonzero(hpf_mask)
     log.debug('Throwing out %d dots of %d (%.1f%%)', junk_count, len(freqs_hz), float(junk_count)/len(freqs_hz)*100)
-    return times_s[hpf_mask], freqs_hz[hpf_mask]
+    return times_s[hpf_mask], freqs_hz[hpf_mask], amplitudes[hpf_mask] if amplitudes is not None else None
 
 
 @print_timing
 def extract_anabat(fname, hpfilter_khz=8.0, **kwargs):
     """Extract (times, frequencies, amplitudes, metadata) from Anabat sequence file"""
+    amplitudes = None
     with open(fname, 'rb') as f, contextlib.closing(mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)) as m:
         size = len(m)
 
@@ -66,6 +73,15 @@ def extract_anabat(fname, hpfilter_khz=8.0, **kwargs):
                 log.exception('Failed extracting timestamp')
                 timestamp = None
             metadata.update(dict(timestamp=timestamp, id=_s(id_code), gps=_s(gps_data)))
+            if data_pointer - 0x150 > 12:  # and m[pos:pos+5] == 'GUANO':
+                try:
+                    guano = GuanoFile.from_string(m[0x150:data_pointer])
+                    log.debug(guano._as_string())
+                    amplitudes = guano.get('ZCANT|Amplitudes', None)
+                except:
+                    log.exception('Failed parsing GUANO metadata block')
+            else:
+                log.debug('No GUANO metadata found')
         log.debug('file_type: %d\tdata_info_pointer: 0x%3x\tdata_pointer: 0x%3x', file_type, data_info_pointer, data_pointer)
         log.debug(metadata)
 
@@ -139,9 +155,9 @@ def extract_anabat(fname, hpfilter_khz=8.0, **kwargs):
     min_, max_ = min(freqs_hz) if any(freqs_hz) else 0, max(freqs_hz) if any(freqs_hz) else 0
     log.debug('%s\tDots: %d\tMinF: %.1f\tMaxF: %.1f', basename(fname), len(freqs_hz), min_/1000.0, max_/1000.0)
 
-    times_s, freqs_hz = hpf_zc(times_s, freqs_hz, hpfilter_khz*1000)
+    times_s, freqs_hz, amplitudes = hpf_zc(times_s, freqs_hz, amplitudes, hpfilter_khz*1000)
 
-    return times_s, freqs_hz, None, metadata
+    return times_s, freqs_hz, amplitudes, metadata
 
 
 def anabat_filename(timestamp):
@@ -187,6 +203,7 @@ class AnabatFileWriter(object):
         self.byte_count = 0      # current file size in bytes, including header
         self.interval_count = 0  # current count of interval values
         self.length_us = 0       # current length in microseconds
+        self.data_pointer = 0x150
 
         self._prev_interval = None
 
@@ -199,13 +216,17 @@ class AnabatFileWriter(object):
     def __repr__(self):
         return '%s(%s)' % (self.__class__.__name__, self.fname)
 
-    def write_header(self, timestamp, divratio, tape=None, loc=None, species=None, spec=None, note1=None, note2=None, id_code=None, res1=25000, vres=0x52):
+    def write_header(self, timestamp, divratio, tape=None, loc=None, species=None, spec=None, note1=None, note2=None, id_code=None, res1=25000, vres=0x52, guano=None):
         """Write the Anabat 132 metadata header. This MUST be called before `write_intervals()`."""
         date = timestamp.strftime('%Y%m%d') if timestamp else '        '
         self._write_start()
         self._write_text_header(tape, date, loc, species, spec, note1, note2)
-        self._write_data_information_table(res1, divratio, vres)
+        if guano:
+            guano = guano.serialize()
+        data_pointer = 0x150 if not guano else 0x150 + len(guano)
+        self._write_data_information_table(res1, divratio, vres, data_pointer)
         self._write_timestamp_etc(timestamp, id_code)
+        self._write_guano(guano)
 
     def _write_start(self):
         self._f.write( struct.pack('< H x B 2x', 0x011a, 132) )  # pointer to data info table (0x011a), file structure version (Anabat 132)
@@ -226,9 +247,8 @@ class AnabatFileWriter(object):
         self._f.write( struct.pack('x') )
         self.byte_count += 275
 
-    def _write_data_information_table(self, res1=25000, divratio=16, vres=0x52):
-        #log.debug('_write_data_information_table(res1=%s, divratio=%s, vres=%s)', res1, divratio, vres)
-        self._f.write( struct.pack('< H H B B', 0x0150, res1, divratio, vres))
+    def _write_data_information_table(self, res1=25000, divratio=16, vres=0x52, data_pointer=0x150):
+        self._f.write( struct.pack('< H H B B', data_pointer, res1, divratio, vres))
         self.byte_count += 6
 
     def _write_timestamp_etc(self, timestamp, id_code=None):
@@ -238,6 +258,12 @@ class AnabatFileWriter(object):
             self._f.write( struct.pack('< H B B B B B B H', 0, 0, 0, 0, 0, 0, 0, 0) )
         self._f.write( struct.pack('< 6s 32s', _pad(id_code, 6), '') )  # TODO: GPS position
         self.byte_count += 48
+
+    def _write_guano(self, guano):
+        if not guano:
+            return
+        self._f.write(guano)
+        self.byte_count += len(guano)
 
     def write_intervals(self, intervals):
         """Write a sequence of transition intervals. You may call this multiple times."""

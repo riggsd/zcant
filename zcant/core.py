@@ -15,6 +15,8 @@ from zcant import print_timing
 from zcant.anabat import extract_anabat, AnabatFileWriter
 from zcant.conversion import wav2zc
 
+from guano import GuanoFile
+
 import numpy as np
 
 import wx
@@ -59,6 +61,8 @@ class ZeroCross(object):
     @property
     def duration(self):
         """The duration of this signal in seconds"""
+        if self.times is None or len(self.times) < 2:
+            return -0
         return self.times[-1] - self.times[0]
 
     def get_slopes(self, smooth=False, max_slope=5000):
@@ -224,6 +228,13 @@ class AnabatFileWriteThread(Thread):
             note2 = 'Myotisoft ZCANT'
         else:
             note1, note2 = 'Myotisoft ZCANT', ''
+        if self.zc.supports_amplitude:
+            log.debug('Adding GUANO metadata :-)')
+            guano = GuanoFile()
+            guano['ZCANT|Amplitudes'] = self.zc.amplitudes
+        else:
+            log.debug('Not adding GUANO metadata :-(')
+            guano = None
 
         log.debug('Saving %s ...', self.fname)
 
@@ -233,7 +244,7 @@ class AnabatFileWriteThread(Thread):
             os.makedirs(outdir)
 
         with AnabatFileWriter(self.fname) as out:
-            out.write_header(timestamp, self.divratio, species=species, note1=note1, note2=note2)
+            out.write_header(timestamp, self.divratio, species=species, note1=note1, note2=note2, guano=guano)
             time_indexes_us = self.zc.times * 1000000
             intervals_us = np.diff(time_indexes_us)
             intervals_us = intervals_us.astype(int)  # TODO: round before int cast; consider casting before diff for performance
