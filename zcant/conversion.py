@@ -129,7 +129,7 @@ def load_wav(fname):
 def dc_offset(signal):
     """Correct DC offset"""
     log.debug('DC offset before: %.1f', np.sum(signal) / len(signal))
-    signal -= signal.sum(dtype=np.int64) / len(signal)
+    signal = signal - signal.sum(dtype=np.int64) / len(signal)
     log.debug('DC offset after:  %.1f', np.sum(signal) / len(signal))
     return signal
 
