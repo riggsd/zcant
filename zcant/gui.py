@@ -114,6 +114,8 @@ class ZcantMainFrame(wx.Frame, wx.FileDropTarget):
 
     WAV_THRESHOLD_DELTA = 0.25  # RMS ratio
     HPF_DELTA = 2.5             # kHz
+    FREQ_MINS = [5, 10, 15, 20]           # kHz
+    FREQ_MAXS = [80, 100, 125, 150, 200]  # kHz
 
     def __init__(self, parent, title='Myotisoft ZCANT '+__version__):
         wx.Frame.__init__(self, parent, title=title, size=(640,480))
@@ -128,6 +130,7 @@ class ZcantMainFrame(wx.Frame, wx.FileDropTarget):
         self.display_cursor = False
         self.display_pulse_markers = True
         self.cmap = 'gnuplot'
+        self.freq_min, self.freq_max = 15, 100
         self.harmonics = {'0.5': False, '1': True, '2': False, '3': False}
 
         self.wav_threshold = 1.5
@@ -210,6 +213,20 @@ class ZcantMainFrame(wx.Frame, wx.FileDropTarget):
         self.Bind(wx.EVT_MENU, self.on_compressed_toggle, realtime_item)
         compressed_item.Check(self.is_compressed)
         realtime_item.Check(not self.is_compressed)
+
+        view_menu.AppendSeparator()
+        min_freq_menu = wx.Menu()
+        for f in ZcantMainFrame.FREQ_MINS:
+            item = min_freq_menu.AppendRadioItem(wx.ID_ANY, '%2d kHz' % f)
+            item.Check(self.freq_min == f)
+            self.Bind(wx.EVT_MENU, self.on_freq_min_change, item)
+        view_menu.AppendSubMenu(min_freq_menu, 'Min Frequency', ' Change the minimum displayed frequency')
+        max_freq_menu = wx.Menu()
+        for f in ZcantMainFrame.FREQ_MAXS:
+            item = max_freq_menu.AppendRadioItem(wx.ID_ANY, '%3d kHz' % f)
+            item.Check(self.freq_max == f)
+            self.Bind(wx.EVT_MENU, self.on_freq_max_change, item)
+        view_menu.AppendSubMenu(max_freq_menu, 'Max Frequency', ' Change the maximum displayed frequency')
 
         view_menu.AppendSeparator()
         log_item = view_menu.AppendRadioItem(wx.ID_ANY, 'Log Scale\tL', ' Logarithmic frequency scale')
@@ -553,6 +570,8 @@ class ZcantMainFrame(wx.Frame, wx.FileDropTarget):
             'harmonics':  self.harmonics,
             'smooth_slopes': self.use_smoothed_slopes,
             'interpolation': self.wav_interpolation,
+            'freq_min':   self.freq_min,
+            'freq_max':   self.freq_max,
             'autosave':   self.autosave,
         }
         with open(CONF_FNAME, 'w') as outf:
@@ -572,6 +591,8 @@ class ZcantMainFrame(wx.Frame, wx.FileDropTarget):
             self.cmap = conf.get('colormap', 'gnuplot')
             self.use_smoothed_slopes = conf.get('smooth_slopes', True)
             self.wav_interpolation = conf.get('interpolation', True)
+            self.freq_min = conf.get('freq_min', 15)
+            self.freq_max = conf.get('freq_max', 100)
             #self.autosave = conf.get('autosave', False)  # TODO: for now, we choose to always start with autosave off
             harmonics = conf.get('harmonics', {'0.5': False, '1': True, '2': False, '3': False})
 
@@ -670,6 +691,20 @@ class ZcantMainFrame(wx.Frame, wx.FileDropTarget):
         self.window_start = 0.0
         self.reload_file()
 
+    def on_freq_min_change(self, event):
+        menu_item = self.GetMenuBar().FindItemById(event.GetId())
+        freq = int(menu_item.GetLabel().split()[0])  # yuck! why can't we bind a closure with the freq value itself?!
+        log.debug('on_freq_min_change(%s)', freq)
+        self.freq_min = freq
+        self.reload_file()
+
+    def on_freq_max_change(self, event):
+        menu_item = self.GetMenuBar().FindItemById(event.GetId())
+        freq = int(menu_item.GetLabel().split()[0])
+        log.debug('on_freq_max_change(%s)', freq)
+        self.freq_max = freq
+        self.reload_file()
+
     def on_win_forward(self, event):
         if self.window_secs is None:
             return
@@ -741,7 +776,9 @@ class ZcantMainFrame(wx.Frame, wx.FileDropTarget):
 
     def plot(self, zc):
         title = title_from_path(zc.metadata.get('path', ''))
-        conf = dict(compressed=self.is_compressed, colormap=self.cmap, scale='linear' if self.is_linear_scale else 'log',
+        conf = dict(compressed=self.is_compressed, colormap=self.cmap,
+                    scale='linear' if self.is_linear_scale else 'log',
+                    freqminmax=(self.freq_min, self.freq_max),
                     filter_markers=(self.hpfilter,), harmonics=self.harmonics,
                     smooth_slopes=self.use_smoothed_slopes, display_cursor=self.display_cursor,
                     pulse_markers=self.display_pulse_markers)
@@ -979,8 +1016,8 @@ class ZeroCrossPlotPanel(PlotPanel):
         'interpolate': True,       # interpolate between WAV samples
         'pulse_markers': True,     # display pulse separators in compressed view
         'display_cursor': False,   # display horiz and vert cursor lines
-        'colormap': 'gnuplot',         # named color map
-        'dot_sizes': (40, 12, 2),  # dot display sizes in points (max, default, min)
+        'colormap': 'gnuplot',     # named color map
+        'dot_sizes': (50, 12, 2),  # dot display sizes in points (max, default, min)
         'harmonics': {'0.5': False, '1': True, '2': False, '3': False},
     }
 
