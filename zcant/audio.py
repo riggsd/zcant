@@ -18,18 +18,6 @@ from scipy.io import wavfile
 
 import sounddevice
 
-if not hasattr(sounddevice, 'get_stream'):
-    log.debug('monkey patching sounddevice %s', sounddevice.__version__)
-
-    def get_stream():
-        _last_callback = sounddevice._last_callback
-        if _last_callback:
-            return _last_callback.stream
-        else:
-            raise RuntimeError('play()/rec()/playrec() was not called yet')
-
-    sounddevice.get_stream = get_stream
-
 
 __all__ = 'AudioThread', 'play_te', 'beep'
 
