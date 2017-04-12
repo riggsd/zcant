@@ -67,7 +67,7 @@ class ThresholdToolbarSlider(wx.Slider):
         wx.Slider.__init__(self, parent_toolbar, wx.ID_ANY, threshold/delta, minValue, maxValue/delta, **kwargs)
         self._threshold = threshold
         self._delta = delta
-        self._tool = parent_toolbar.AddControl(self)
+        self._tool = parent_toolbar.AddControl(self, 'Sensitivity %.2f RMS' % threshold)
         self._update_label(self._threshold)
         self.Bind(wx.EVT_SCROLL_THUMBTRACK, lambda e: self._update_label(e.GetEventObject().GetValue() * self._delta))
 
