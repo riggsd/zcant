@@ -76,7 +76,7 @@ def extract_anabat(fname, hpfilter_khz=8.0, **kwargs):
             if data_pointer - 0x150 > 12:  # and m[pos:pos+5] == 'GUANO':
                 try:
                     guano = GuanoFile.from_string(m[0x150:data_pointer])
-                    log.debug(guano._as_string())
+                    log.debug(guano.to_string())
                     amplitudes = guano.get('ZCANT|Amplitudes', None)
                 except:
                     log.exception('Failed parsing GUANO metadata block')
