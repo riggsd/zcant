@@ -12,11 +12,12 @@ import mmap
 import struct
 import unicodedata
 import contextlib
-from glob import glob
 from os.path import basename
 from datetime import datetime
+from collections import OrderedDict
 
 import numpy as np
+from numpy.ma import masked_array
 
 from guano import GuanoFile, base64decode, base64encode
 
@@ -36,6 +37,14 @@ ANABAT_132_ADDL_DATA_INFO_FMT = '< H B B B B B B H 6s 32s'  # 0x120: year, month
 GuanoFile.register('ZCANT', 'Amplitudes',
                    lambda b64data: np.frombuffer(base64decode(b64data)),
                    lambda data: base64encode(data.tobytes()))
+
+
+class DotStatus:
+    """Enumeration of dot status types"""
+    OUT_OF_RANGE = 0
+    OFF    = 1
+    NORMAL = 2
+    MAIN   = 3
 
 
 def _s(s):
@@ -87,8 +96,9 @@ def extract_anabat(fname, hpfilter_khz=8.0, **kwargs):
 
         # parse actual sequence data
         i = data_pointer   # byte index as we scan through the file (data starts at 0x150 for v132, 0x120 for older files)
-        intervals_us = np.empty(2**14, np.dtype('u4'))
-        int_i = 0
+        intervals_us = np.empty(2**14, np.dtype('u4'))  # FIXME: new .zc files are no longer limited to max 32k dots!
+        offdots = OrderedDict()  # dot index -> number of subsequent dots
+        int_i = 0  # interval index
 
         while i < size:
             byte = Byte.unpack_from(m, i)[0]
@@ -138,8 +148,10 @@ def extract_anabat(fname, hpfilter_khz=8.0, **kwargs):
                 status = byte & 0b00011111
                 i += 1
                 dotcount = Byte.unpack_from(m, i)[0]
-                log.debug('UNSUPPORTED: Status %X for %d dots', status, dotcount)
-                # TODO: not yet supported
+                if status == DotStatus.OFF:
+                    offdots[int_i] = dotcount
+                else:
+                    log.debug('UNSUPPORTED: Status %X for %d dots at dot %d (file offset 0x%X)', status, dotcount, int_i, i)
 
             else:
                 raise Exception('Unknown byte %X at offset 0x%X' % (byte, i))
@@ -147,10 +159,20 @@ def extract_anabat(fname, hpfilter_khz=8.0, **kwargs):
             i += 1
 
     intervals_us = intervals_us[:int_i]  # TODO: should we free unused memory?
+
     intervals_s = intervals_us * 1e-6
     times_s = np.cumsum(intervals_s)
     freqs_hz = 1 / intervals_s * (divratio / 2)
     freqs_hz[freqs_hz == np.inf] = 0  # TODO: fix divide-by-zero
+
+    if offdots:
+        n_offdots = sum(offdots.values())
+        log.debug('Throwing out %d off-dots of %d (%.1f%%)', n_offdots, len(times_s), float(n_offdots)/len(times_s)*100)
+        off_mask = np.zeros(len(intervals_us), dtype=bool)
+        for int_i, dotcount in offdots.items():
+            off_mask[int_i:int_i+dotcount] = True
+        times_s = masked_array(times_s, mask=off_mask).compressed()
+        freqs_hz = masked_array(freqs_hz, mask=off_mask).compressed()
 
     min_, max_ = min(freqs_hz) if any(freqs_hz) else 0, max(freqs_hz) if any(freqs_hz) else 0
     log.debug('%s\tDots: %d\tMinF: %.1f\tMaxF: %.1f', basename(fname), len(freqs_hz), min_/1000.0, max_/1000.0)
@@ -312,24 +334,3 @@ class AnabatFileWriter(object):
     def close(self):
         """Close the outfile and free resources."""
         self._f.close()
-
-
-
-if __name__ == '__main__':
-    import os.path
-    from matplotlib.pylab import *
-
-    dirname = '/Users/driggs/bat_calls/NC/Boone/20141027/'
-
-    for fname in glob(os.path.join(dirname, '*.*#'))[:5]:
-        times, freqs, md = extract_anabat(fname)
-        figure()
-        title(os.path.basename(fname))
-        ylabel('Frequency (Hz)')
-        xlabel('Time (s)')
-        grid(axis='y')
-        ylim(15*1000, 70*1000)
-        #xlim(1.0, 2.5)
-        plot(times, freqs, ',')
-
-    show()
