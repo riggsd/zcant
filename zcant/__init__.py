@@ -21,6 +21,6 @@ def print_timing(func):
         t1 = time.time()
         res = func(*args, **kwargs)
         t2 = time.time()
-        log.debug('%06.1f ms %s', (t2-t1)*1000.0, func.func_name)
+        log.debug('%06.1f ms %s', (t2-t1)*1000.0, func.func_name if hasattr(func, 'func_name') else func.__name__)
         return res
     return wrapper

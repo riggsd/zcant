@@ -226,7 +226,7 @@ class AnabatFileWriter(object):
         data_pointer = 0x150 if not guano else 0x150 + len(guano)
         self._write_data_information_table(res1, divratio, vres, data_pointer)
         self._write_timestamp_etc(timestamp, id_code)
-        self._write_guano(guano)
+        #self._write_guano(guano)  # TESTING
 
     def _write_start(self):
         self._f.write( struct.pack('< H x B 2x', 0x011a, 132) )  # pointer to data info table (0x011a), file structure version (Anabat 132)

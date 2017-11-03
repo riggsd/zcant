@@ -15,12 +15,14 @@ import os.path
 
 from setuptools import setup
 
+from Cython.Build import cythonize
+
 from zcant import __version__
 
 
 def find_dylib(dylib):
     """Find the absolute path to a named framework dylib"""
-    for dir in site.getsitepackages():
+    for dir in site.getsitepackages():  # FIXME: not compatible with virtualenv!
         path = os.path.join(dir, dylib)
         if os.path.isfile(path):
             return path
@@ -34,10 +36,11 @@ ICON = 'docs/myotisoft_icon.icns'
 
 PY2APP_OPTIONS = {
     'argv_emulation': False,
-    'optimize': 1,
+    'optimize': 0,
+    'strip': True,
     'iconfile': ICON,
     'frameworks': [find_dylib('_sounddevice_data/libportaudio.dylib')],
-    'excludes': ['phonon', 'qt', 'PyQt4'],
+    'excludes': ['phonon', 'qt', 'PyQt4', 'PyQt5'],
     'dylib_excludes': ['PyQT', 'QtCore', 'QtDeclarative', 'QtDesigner', 'QtGui', 'QtHelp', 'QtMultimedia', 'QtNetwork', 'QtOpenGL', 'QtScript', 'QtScriptTools', 'QtSql', 'QtSvg', 'QtTest', 'QtWebKit', 'QtXml', 'QtXmlPatterns',
                         'phonon', 'GEOS',
                         '_codecs_cn.so', '_codecs_hk.so', '_codecs_iso2022.so', '_codecs_jp.so', '_codecs_kr.so', '_codecs_tw.so'],
@@ -49,4 +52,5 @@ setup(
     data_files=DATA_FILES,
     options={'py2app': PY2APP_OPTIONS},
     setup_requires=['py2app'],
+    ext_modules = cythonize('zcant/*.pyx'),
 )
