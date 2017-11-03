@@ -96,18 +96,23 @@ def extract_anabat(fname, hpfilter_khz=8.0, **kwargs):
 
         # parse actual sequence data
         i = data_pointer   # byte index as we scan through the file (data starts at 0x150 for v132, 0x120 for older files)
-        intervals_us = np.empty(2**14, np.dtype('u4'))  # FIXME: new .zc files are no longer limited to max 32k dots!
+        intervals_us = np.empty(2**14, np.dtype('u4'))
         offdots = OrderedDict()  # dot index -> number of subsequent dots
         int_i = 0  # interval index
 
         while i < size:
+            
+            if int_i >= len(intervals_us):
+                # Anabat files were formerly capped at 16384 dots, but may now be larger; grow
+                intervals_us = np.concatenate((intervals_us, np.empty(2**14, np.dtype('u4'))))
+
             byte = Byte.unpack_from(m, i)[0]
 
             if byte <= 0x7F:
                 # Single byte is a 7-bit signed two's complement offset from previous interval
                 offset = byte if byte < 2**6 else byte - 2**7  # clever two's complement unroll
                 if int_i > 0:
-                    intervals_us[int_i] = intervals_us[int_i-1] + offset  # FIXME: IndexError: index 16384 is out of bounds for axis 0 with size 16384
+                    intervals_us[int_i] = intervals_us[int_i-1] + offset
                     int_i += 1
                 else:
                     log.warning('Sequence file starts with a one-byte interval diff! Skipping byte %x', byte)
