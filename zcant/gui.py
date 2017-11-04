@@ -552,7 +552,14 @@ class ZcantMainFrame(wx.Frame, wx.FileDropTarget):
     def OnDropFiles(self, x, y, filenames):
         """File drag-and-drop handler"""
         log.debug('OnDropFiles: %s, %s, %s', x, y, filenames)
-        dirname, filename = os.path.split(filenames[0])
+        filename = filenames[0]
+        if os.path.isdir(filename):
+            files = self.listdir(filename)
+            if not files:
+                return beep()
+            dirname, filename = filename, files[0]
+        else:
+            dirname, filename = os.path.split(filename)
         self.load_file(dirname, filename)
         self.save_conf()
 
