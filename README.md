@@ -36,13 +36,26 @@ Copyright (C) 2012-2017 by Myotisoft LLC <http://myotisoft.com>
 
 ## Installation
 
-1. Download and install [Python 2.7](https://www.python.org/downloads/), or verify that your existing version is 2.7 with with `python --version`.
+1. Download and install [Python 2.7](https://www.python.org/downloads/), or verify that your
+   existing version is 2.7 with with `python --version`.
 
-2. Install wxPython "classic" 3.0.2.0. See: https://wiki.wxpython.org/How%20to%20install%20wxPython
+2. Install wxPython "classic" 3.0.2.0. See https://wiki.wxpython.org/How%20to%20install%20wxPython
+   for details, or use the following direct links:
+   [Window 32-bit](https://sourceforge.net/projects/wxpython/files/wxPython/3.0.2.0/wxPython3.0-win32-3.0.2.0-py27.exe/download)
+   [Windows 64-bit](https://sourceforge.net/projects/wxpython/files/wxPython/3.0.2.0/wxPython3.0-win64-3.0.2.0-py27.exe/download)
+   [Mac OSX](https://sourceforge.net/projects/wxpython/files/wxPython/3.0.2.0/wxPython3.0-osx-3.0.2.0-cocoa-py2.7.dmg/download)
 
-3. The remainder of the dependencies can be installed using `pip`:
+3. Download the ZCANT source code, either by downloading the [latest ZCANT release .zip](https://github.com/riggsd/zcant/releases),
+   or by cloning your own copy of the source repository with the commands:
+
+    $> git clone https://github.com/riggsd/zcant.git  
+    $> cd zcant
+
+4. The remainder of the dependency libraries can be installed using `pip`:
 
     $> pip -r requirements.txt
+
+5. Start ZCANT:
 
     $> python zcant.py
 
