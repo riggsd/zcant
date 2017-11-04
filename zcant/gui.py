@@ -15,6 +15,7 @@ import os.path
 import sys
 import json
 import webbrowser
+import subprocess
 from bisect import bisect
 from fnmatch import fnmatch
 
@@ -190,6 +191,8 @@ class ZcantMainFrame(wx.Frame, wx.FileDropTarget):
         self.Bind(wx.EVT_MENU, self.on_file_delete, delete_item)
         delete_item = file_menu.Append(wx.ID_DELETE, '&Delete ZC\tShift+DEL', ' Delete just the converted zero-cross version of the current file')
         self.Bind(wx.EVT_MENU, self.on_file_delete, delete_item)
+        browse_item = file_menu.Append(wx.ID_ANY, 'Browse to File', ' Browse to file using your OS file manager')
+        self.Bind(wx.EVT_MENU, lambda e: browse_external(os.path.join(self.dirname, self.filename)), browse_item)
         about_item = file_menu.Append(wx.ID_ABOUT, '&About', ' Information about this program')
         self.Bind(wx.EVT_MENU, self.on_about, about_item)
         file_menu.AppendSeparator()
@@ -1202,12 +1205,22 @@ class ZeroCrossPlotPanel(PlotPanel):
 
 
 def launch_external(fname):
-    """Cross-platform way to launch a file using the preferred external program"""
+    """Launch a file using the preferred external program (eg. PDF with Acrobat)"""
     log.debug('Launching with external program: %s ...', fname)
-    import subprocess
     if sys.platform.startswith('darwin'):
         subprocess.call(('open', fname))
     elif os.name == 'nt':
         os.startfile(fname)
     elif os.name == 'posix':
         subprocess.call(('xdg-open', fname))
+
+
+def browse_external(fname):
+    """Browse a specified file using Windows Explorer, Finder, etc."""
+    log.debug('Browsing to file: %s ...', fname)
+    if sys.platform.startswith('darwin'):
+        subprocess.call(('open', '-R', fname))
+    elif os.name == 'nt':
+        os.Popen(r'explorer /select,"%s"' % fname)
+    elif os.name == 'posix':
+        subprocess.call(('nautilus', fname))  # gnome only!
