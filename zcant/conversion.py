@@ -126,6 +126,16 @@ def load_wav(fname):
 
 
 @print_timing
+def load_windowed_wav(fname, start, duration):
+    """Produce (samplerate, signal) for a subset of a .WAV file. `start` and `duration` in seconds."""
+    # we currently load the entire .WAV every time; consider being more efficient
+    samplerate, signal = load_wav(fname)
+    start_i = int(start * samplerate)
+    end_i = int(start_i + duration * samplerate)
+    return samplerate, signal[start_i:end_i]
+
+
+@print_timing
 def dc_offset(signal):
     """Correct DC offset"""
     log.debug('DC offset before: %.1f', np.sum(signal) / len(signal))

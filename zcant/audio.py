@@ -12,7 +12,7 @@ import logging
 from time import sleep
 log = logging.getLogger(__name__)
 
-from conversion import load_wav
+from conversion import load_wav, load_windowed_wav
 
 from scipy.io import wavfile
 
@@ -63,6 +63,11 @@ class AudioThread(threading.Thread):
         t = AudioThread(fname, te)
         t.start()
         return t
+
+    @staticmethod
+    def play_windowed(fname, te, start, duration):
+        samplerate, signal = load_windowed_wav(fname, start, duration)
+        return AudioThread.play((samplerate, signal), te)
 
     def run(self):
         # thread main

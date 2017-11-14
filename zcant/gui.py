@@ -513,7 +513,10 @@ class ZcantMainFrame(wx.Frame, wx.FileDropTarget):
             if not self.filename.lower().endswith('.wav'):
                 return
             filename = os.path.join(self.dirname, self.filename)
-            self.audio_thread = AudioThread.play(filename, te)
+            if self.window_secs:
+                self.audio_thread = AudioThread.play_windowed(filename, te, self.window_start, self.window_secs)
+            else:
+                self.audio_thread = AudioThread.play(filename, te)
 
     def on_about(self, event):
         log.debug('about: %s', event)
