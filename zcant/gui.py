@@ -156,7 +156,7 @@ class ZcantMainFrame(wx.Frame, wx.FileDropTarget):
         if self.dirname and self.filename:
             try:
                 self.load_file(self.dirname, self.filename)
-            except Exception, e:
+            except Exception:
                 log.exception('Failed opening default file: %s', os.path.join(self.dirname, self.filename))
         else:
             log.debug('No valid dirname/filename; doing nothing.')
@@ -440,7 +440,7 @@ class ZcantMainFrame(wx.Frame, wx.FileDropTarget):
         log.debug('Saving image: %s', imagename)
         try:
             self.plotpanel.figure.savefig(imagename)
-        except Exception, e:
+        except Exception:
             log.exception('Failed saving image: %s', imagename)
 
     def on_autosave_toggle(self, event):
@@ -571,7 +571,7 @@ class ZcantMainFrame(wx.Frame, wx.FileDropTarget):
         try:
             if not os.path.isdir(conf_dir):
                 os.mkdir(conf_dir)
-        except IOError, e:
+        except IOError:
             logging.exception('Failed attempting to create conf directory: %s', conf_dir)
 
         conf = {
@@ -809,7 +809,7 @@ class ZcantMainFrame(wx.Frame, wx.FileDropTarget):
                 self.plotpanel.Destroy()  # out with the old, in with the new
             self.plotpanel = panel
 
-        except Exception, e:
+        except Exception:
             log.exception('Failed plotting %s', zc.metadata.get('filename', ''))
 
     def _pretty_window_size(self):
@@ -1144,9 +1144,9 @@ class ZeroCrossPlotPanel(PlotPanel):
             """eclick and erelease are matplotlib events at press and release"""
             x1, y1 = eclick.xdata, eclick.ydata
             x2, y2 = erelease.xdata, erelease.ydata
-            print ' Select  (%.3f,%.1f) -> (%.3f,%.1f)  button: %d' % (x1, y1, x2, y2, eclick.button)
+            log.debug(' Select  (%.3f,%.1f) -> (%.3f,%.1f)  button: %d' % (x1, y1, x2, y2, eclick.button))
             slope = (np.log2(y2) - np.log2(y1)) / (x2 - x1)  # FIXME: we don't support compressed mode here!
-            print '         slope: %.1f oct/sec  (%.1f kHz / %.3f sec)' % (slope, y2 - y1, x2 - x1)
+            log.debug('         slope: %.1f oct/sec  (%.1f kHz / %.3f sec)' % (slope, y2 - y1, x2 - x1))
 
         self.selector = RectangleSelector(dot_plot, onselect, drawtype='box')
         #connect('key_press_event', toggle_selector)
@@ -1156,7 +1156,7 @@ class ZeroCrossPlotPanel(PlotPanel):
         cbar_plot.set_title('Slope')
         try:
             cbar = self.figure.colorbar(dot_scatter, cax=cbar_plot, ticks=[])
-        except TypeError, e:
+        except TypeError:
             # colorbar() blows up on empty set
             sm = ScalarMappable(cmap=self.config['colormap'])  # TODO: this should probably share colormap code with histogram
             sm.set_array(np.array([self.SLOPE_MIN, self.SLOPE_MAX]))

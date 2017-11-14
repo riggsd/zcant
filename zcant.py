@@ -32,7 +32,7 @@ def configure_logging(logfilename, level=logging.DEBUG):
     logfilename = os.path.expanduser(logfilename)
     try:
         os.makedirs(os.path.dirname(logfilename))
-    except OSError, e:
+    except OSError as e:
         if e.errno != errno.EEXIST:
             raise
     try:
@@ -64,7 +64,7 @@ def main():
     log.debug('%s %s %s', platform.python_implementation(), platform.python_version(), platform.platform())
     try:
         zcant_gui()
-    except Exception, e:
+    except Exception as e:
         log.exception('GUI initialization failed!')
         sys.exit(255)
 

@@ -78,7 +78,7 @@ def extract_anabat(fname, hpfilter_khz=8.0, **kwargs):
             year, month, day, hour, minute, second, second_hundredths, microseconds, id_code, gps_data = struct.unpack_from(ANABAT_132_ADDL_DATA_INFO_FMT, m, 0x120)
             try:
                 timestamp = datetime(year, month, day, hour, minute, second, second_hundredths * 10000 + microseconds)
-            except ValueError, e:
+            except ValueError as e:
                 log.exception('Failed extracting timestamp')
                 timestamp = None
             metadata.update(dict(timestamp=timestamp, id=_s(id_code), gps=_s(gps_data)))

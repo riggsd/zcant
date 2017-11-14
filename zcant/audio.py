@@ -7,6 +7,8 @@ Copyright (C) 2012-2017 Myotisoft LLC, all rights reserved.
 You may use, distribute, and modify this code under the terms of the MIT License.
 """
 
+from __future__ import print_function
+
 import threading
 import logging
 from time import sleep
@@ -84,7 +86,7 @@ class AudioThread(threading.Thread):
         """Check to see if this thread is still playing or if it is dead"""
         try:
             return self.stream is not None and self.stream.active
-        except sounddevice.PortAudioError, e:
+        except sounddevice.PortAudioError:
             return False
 
     def wait(self):
@@ -104,17 +106,17 @@ def device_test():
         for r in rates:
             try:
                 sounddevice.check_input_settings(samplerate=int(r*1000))
-                print '\t%.1f kHz OK' % r
+                print('\t%.1f kHz OK' % r)
             except sounddevice.PortAudioError:
-                print '\t%.1f kHz not supported!' % r
+                print('\t%.1f kHz not supported!' % r)
 
-    print 'sounddevice ' + sounddevice.__version__
-    print sounddevice.get_portaudio_version()[1]
-    print sounddevice.query_devices()
+    print('sounddevice ' + sounddevice.__version__)
+    print(sounddevice.get_portaudio_version()[1])
+    print(sounddevice.query_devices())
 
-    print '\n10x Time Expansion:'
+    print('\n10x Time Expansion:')
     test_rates([r/10.0 for r in rates])
-    print '\nRealtime:'
+    print('\nRealtime:')
     test_rates(rates)
 
 
@@ -122,7 +124,7 @@ if __name__ == '__main__':
     # python -m zcant.audio
     device_test()
 
-    # print 'Press CTRL-C to end time-expansion playback.'
+    # print('Press CTRL-C to end time-expansion playback.')
     #
     # for te in 4, 8, 10, 12, 16, 20:
     #

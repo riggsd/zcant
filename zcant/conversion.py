@@ -52,9 +52,9 @@ class _Wave_read(wave.Wave_read):
         self._soundpos = 0
         self._file = Chunk(file, bigendian=0, align=self.align)
         if self._file.getname() != 'RIFF':
-            raise wave.Error, 'file does not start with RIFF id'
+            raise wave.Error('file does not start with RIFF id')
         if self._file.read(4) != 'WAVE':
-            raise wave.Error, 'not a WAVE file'
+            raise wave.Error('not a WAVE file')
         self._fmt_chunk_read = 0
         self._data_chunk = None
         while 1:
@@ -69,14 +69,14 @@ class _Wave_read(wave.Wave_read):
                 self._fmt_chunk_read = 1
             elif chunkname == 'data':
                 if not self._fmt_chunk_read:
-                    raise wave.Error, 'data chunk before fmt chunk'
+                    raise wave.Error('data chunk before fmt chunk')
                 self._data_chunk = chunk
                 self._nframes = chunk.chunksize // self._framesize
                 self._data_seek_needed = 0
                 break
             chunk.skip()
         if not self._fmt_chunk_read or not self._data_chunk:
-            raise wave.Error, 'fmt chunk and/or data chunk missing'
+            raise wave.Error('fmt chunk and/or data chunk missing')
 
     def __init__(self, f, align=True):
         self.align = align
@@ -89,7 +89,7 @@ def load_wav(fname):
 
     try:
         wav = wave.open(fname, 'rb')
-    except RuntimeError, e:
+    except RuntimeError:
         # chunk.Chunk barfs on odd-sized chunks, so try again ignoring word-alignment
         wav = _Wave_read(fname, align=False)
 

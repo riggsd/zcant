@@ -202,7 +202,7 @@ class MainThread(Thread):
             log.debug('    %s:  times: %d  freqs: %d', self.filename, len(times), len(freqs))
 
             result = ZeroCross(times, freqs, amplitudes, metadata)
-        except Exception, e:
+        except Exception:
             log.exception('Barfed loading file: %s', self.path)
         wx.CallAfter(self.parent_cb, result)
 
