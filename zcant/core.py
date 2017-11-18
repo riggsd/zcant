@@ -19,8 +19,6 @@ from guano import GuanoFile
 
 import numpy as np
 
-import wx
-
 import logging
 log = logging.getLogger(__name__)
 
@@ -152,7 +150,7 @@ def _slopes(x, y, max_slope=5000):
         y_octaves = y
     else:
         # calculation for difference wil be same in Hz or kHz, so no need to convert
-        y_octaves = np.log2(y)
+        y_octaves = np.log2(y)  # FIXME: FloatingPointError: divide by zero encountered in log2
         y_octaves[np.isnan(y_octaves)] = 0.0
     slopes = np.diff(y_octaves) / np.diff(x)
     slopes = np.append(slopes, slopes[-1])  # FIXME: hack for final dot (instead merge slope(signal[1:]) and slope(signal[:-1])
@@ -192,7 +190,12 @@ class MainThread(Thread):
         else:
             raise Exception('Unknown file type: %s', path)
 
+    def on_complete(self, result):
+        """Called upon completion of run(), may be overridden by subclasses"""
+        self.parent_cb(result)
+
     def run(self):
+        """Thread main"""
         result = None
         try:
             times, freqs, amplitudes, metadata = self.extract(self.path)
@@ -204,7 +207,8 @@ class MainThread(Thread):
             result = ZeroCross(times, freqs, amplitudes, metadata)
         except Exception:
             log.exception('Barfed loading file: %s', self.path)
-        wx.CallAfter(self.parent_cb, result)
+
+        self.on_complete(result)
 
 
 class AnabatFileWriteThread(Thread):

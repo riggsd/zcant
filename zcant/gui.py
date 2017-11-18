@@ -769,7 +769,7 @@ class ZcantMainFrame(wx.Frame, wx.FileDropTarget):
                       interpolation=self.wav_interpolation)
 
         wx.BeginBusyCursor()
-        MainThread(self.after_load, path, **kwargs)
+        WxMainThread(self.after_load, path, **kwargs)
 
     def after_load(self, result):
         # callback when we return from asynchronous MainThread
@@ -1145,7 +1145,9 @@ class ZeroCrossPlotPanel(PlotPanel):
             x1, y1 = eclick.xdata, eclick.ydata
             x2, y2 = erelease.xdata, erelease.ydata
             log.debug(' Select  (%.3f,%.1f) -> (%.3f,%.1f)  button: %d' % (x1, y1, x2, y2, eclick.button))
-            slope = (np.log2(y2) - np.log2(y1)) / (x2 - x1)  # FIXME: we don't support compressed mode here!
+            if self.config['compressed']:
+                x1, x2 = self.zc.times[int(round(x1))], self.zc.times[int(round(x2))]
+            slope = (np.log2(y2) - np.log2(y1)) / (x2 - x1)
             log.debug('         slope: %.1f oct/sec  (%.1f kHz / %.3f sec)' % (slope, y2 - y1, x2 - x1))
 
         self.selector = RectangleSelector(dot_plot, onselect, drawtype='box')
@@ -1212,6 +1214,13 @@ class ZeroCrossPlotPanel(PlotPanel):
     #     if event.inaxes:
     #         x, y = event.xdata, event.ydata
     #         print '%.1fkHz, %.1f' % (y, x)
+
+
+class WxMainThread(MainThread):
+    """Main thread handler which hooks back into wx GUI thread upon completion"""
+
+    def on_complete(self, result):
+        wx.CallAfter(self.parent_cb, result)
 
 
 def launch_external(fname):
