@@ -7,6 +7,8 @@ Copyright (C) 2012-2017 Myotisoft LLC, all rights reserved.
 You may use, distribute, and modify this code under the terms of the MIT License.
 """
 
+from __future__ import division
+
 import io
 import mmap
 import struct
@@ -58,7 +60,7 @@ def hpf_zc(times_s, freqs_hz, amplitudes, cutoff_freq_hz):
         return times_s, freqs_hz, amplitudes
     hpf_mask = np.where(freqs_hz > cutoff_freq_hz)
     junk_count = len(freqs_hz) - np.count_nonzero(hpf_mask)
-    log.debug('Throwing out %d dots of %d (%.1f%%)', junk_count, len(freqs_hz), float(junk_count)/len(freqs_hz)*100)
+    log.debug('HPF throwing out %d dots of %d (%.1f%%)', junk_count, len(freqs_hz), float(junk_count)/len(freqs_hz)*100)
     return times_s[hpf_mask], freqs_hz[hpf_mask], amplitudes[hpf_mask] if amplitudes is not None else None
 
 
@@ -93,10 +95,12 @@ def extract_anabat(fname, hpfilter_khz=8.0, **kwargs):
                 log.debug('No GUANO metadata found')
         log.debug('file_type: %d\tdata_info_pointer: 0x%3x\tdata_pointer: 0x%3x', file_type, data_info_pointer, data_pointer)
         log.debug(metadata)
+        if res1 != 25000:
+            raise ValueError('Anabat files with non-standard RES1 (%s) not yet supported!' % res1)
 
         # parse actual sequence data
         i = data_pointer   # byte index as we scan through the file (data starts at 0x150 for v132, 0x120 for older files)
-        intervals_us = np.empty(2**14, np.dtype('u4'))
+        intervals_us = np.empty(2**14, np.dtype('uint32'))
         offdots = OrderedDict()  # dot index -> number of subsequent dots
         int_i = 0  # interval index
 
@@ -104,7 +108,7 @@ def extract_anabat(fname, hpfilter_khz=8.0, **kwargs):
             
             if int_i >= len(intervals_us):
                 # Anabat files were formerly capped at 16384 dots, but may now be larger; grow
-                intervals_us = np.concatenate((intervals_us, np.empty(2**14, np.dtype('u4'))))
+                intervals_us = np.concatenate((intervals_us, np.empty(2**14, np.dtype('uint32'))))
 
             byte = Byte.unpack_from(m, i)[0]
 
@@ -167,8 +171,10 @@ def extract_anabat(fname, hpfilter_khz=8.0, **kwargs):
 
     intervals_s = intervals_us * 1e-6
     times_s = np.cumsum(intervals_s)
-    freqs_hz = 1 / intervals_s * (divratio / 2)
+    freqs_hz = 1 / (times_s[2:] - times_s[:-2]) * divratio
     freqs_hz[freqs_hz == np.inf] = 0  # TODO: fix divide-by-zero
+    freqs_hz[freqs_hz < 4000] = 0
+    freqs_hz[freqs_hz > 250000] = 0
 
     if offdots:
         n_offdots = sum(offdots.values())
@@ -184,6 +190,7 @@ def extract_anabat(fname, hpfilter_khz=8.0, **kwargs):
 
     times_s, freqs_hz, amplitudes = hpf_zc(times_s, freqs_hz, amplitudes, hpfilter_khz*1000)
 
+    assert(len(times_s) == len(freqs_hz) == len(amplitudes or freqs_hz))
     return times_s, freqs_hz, amplitudes, metadata
 
 
